@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>NL Ruimtelijke Plannen - Maatvoering Downloader - v4</title>
+    <title>NL Ruimtelijke Plannen - Maatvoering Downloader - v5</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         body { margin: 0; font-family: sans-serif; background: #1a1a1a; }
@@ -33,22 +33,28 @@
 <script>
     const map = L.map('map').setView([52.2, 5.3], 7);
 
-    // Base Layer
+    // 1. Base Layer
     L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
         attribution: '©OpenStreetMap'
     }).addTo(map);
 
-    // BAG Layer (Clean property lines)
+    // 2. The Mask (Greying out outside NL)
+    const maskStyle = { color: 'none', fillColor: '#333', fillOpacity: 0.6, interactive: false };
+    const nl = { n: 53.7, s: 50.7, w: 3.2, e: 7.3 };
+    L.rectangle([[90, -180], [nl.n, 180]], maskStyle).addTo(map); 
+    L.rectangle([[nl.s, -180], [-90, 180]], maskStyle).addTo(map); 
+    L.rectangle([[nl.n, -180], [nl.s, nl.w]], maskStyle).addTo(map); 
+    L.rectangle([[nl.n, nl.e], [nl.s, 180]], maskStyle).addTo(map); 
+
+    // 3. BAG & Maatvoering Layers
     L.tileLayer.wms('https://service.pdok.nl/lv/bag/wms/v2_0', {
         layers: 'pand',
         format: 'image/png',
         transparent: true,
         version: '1.3.0',
-        minZoom: 16,
-        attribution: '© PDOK BAG'
+        minZoom: 16
     }).addTo(map);
 
-    // Maatvoering Visuals
     L.tileLayer.wms('https://service.pdok.nl/kadaster/plu/wms/v1_0', {
         layers: 'Maatvoering',
         format: 'image/png',
@@ -62,7 +68,6 @@
     const radiusInput = document.getElementById('radius');
     const statusDiv = document.getElementById('status');
 
-    // RD projection for the WFS query
     const RD = "+proj=sterea +lat_0=52.15616055555555 +lon_0=5.38763888888889 +k=0.9999079 +x_0=155000 +y_0=463000 +ellps=bessel +units=m +no_defs";
 
     function updateCircle() {
@@ -75,10 +80,8 @@
         }
     }
 
-    // FIX: Re-added the listeners so the circle updates live
     radiusInput.addEventListener('input', updateCircle);
-    radiusInput.addEventListener('change', updateCircle);
-
+    
     map.on('click', function(e) {
         selectedPoint = e.latlng;
         updateCircle();
@@ -106,8 +109,7 @@
 
         try {
             const res = await fetch(`${baseUrl}?${params.toString()}`);
-            if (!res.ok) throw new Error("Service unavailable");
-            
+            if (!res.ok) throw new Error("Service error");
             const data = await res.json();
             
             if (data.features && data.features.length > 0) {
@@ -115,14 +117,14 @@
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `maatvoering_${Math.round(selectedPoint.lat)}_${Math.round(selectedPoint.lng)}.geojson`;
+                a.download = `maatvoering_${Date.now()}.geojson`;
                 a.click();
                 statusDiv.innerText = `Success! Found ${data.features.length} features.`;
             } else {
-                statusDiv.innerText = "No Maatvoering features found here.";
+                statusDiv.innerText = "No Maatvoering found here.";
             }
         } catch (e) {
-            statusDiv.innerText = "Error fetching data. Try a different area.";
+            statusDiv.innerText = "Download error.";
             console.error(e);
         }
     }
