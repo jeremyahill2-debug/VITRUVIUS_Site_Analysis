@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>NL Ruimtelijke Plannen - Maatvoering Downloader - v6</title>
+    <title>NL Ruimtelijke Plannen Downloader - Maatvoering v7</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         body { margin: 0; font-family: sans-serif; background: #1a1a1a; }
@@ -22,13 +22,12 @@
     <strong style="color: #333;">Search Radius (meters)</strong>
     <input type="number" id="radius" value="500">
     <button onclick="downloadData()">Download Maatvoering</button>
-    <div id="status">Click the map inside the grey box.</div>
+    <div id="status">Zoom in and click the map.</div>
 </div>
 
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.js"></script>
 
 <script>
     const map = L.map('map').setView([52.2, 5.3], 7);
@@ -46,7 +45,7 @@
     L.rectangle([[nl.n, -180], [nl.s, nl.w]], maskStyle).addTo(map); 
     L.rectangle([[nl.n, nl.e], [nl.s, 180]], maskStyle).addTo(map); 
 
-    // 3. Visual Layers (BAG for properties, PLU for planning)
+    // 3. Visual Reference Layers
     L.tileLayer.wms('https://service.pdok.nl/lv/bag/wms/v2_0', {
         layers: 'pand',
         format: 'image/png',
@@ -67,9 +66,6 @@
     let circlePreview = null;
     const radiusInput = document.getElementById('radius');
     const statusDiv = document.getElementById('status');
-
-    // RD projection for the WFS query
-    const RD = "+proj=sterea +lat_0=52.15616055555555 +lon_0=5.38763888888889 +k=0.9999079 +x_0=155000 +y_0=463000 +ellps=bessel +units=m +no_defs";
 
     function updateCircle() {
         if (!selectedPoint) return;
@@ -93,21 +89,24 @@
         if (!selectedPoint) return alert("Click map first.");
         
         const r = radiusInput.value;
-        statusDiv.innerText = "Connecting to PDOK...";
+        statusDiv.innerText = "Requesting data via OGC API...";
 
-        // Convert Lat/Lon to Dutch RD (X, Y)
-        const rdCoords = proj4("WGS84", RD, [selectedPoint.lng, selectedPoint.lat]);
-        
-        // Construct the WFS URL
-        // Using version 1.1.0 can sometimes be more stable for GeoJSON output on older GeoServer setups
-        const baseUrl = "https://service.pdok.nl/kadaster/plu/wfs/v1_0";
-        const cql = `DWITHIN(geometrie,POINT(${rdCoords[0]} ${rdCoords[1]}),${r},meters)`;
-        
-        const url = `${baseUrl}?service=WFS&version=1.1.0&request=GetFeature&typeName=plu:Maatvoering&outputFormat=application/json&srsName=EPSG:28992&CQL_FILTER=${encodeURIComponent(cql)}`;
+        // OGC API Features use a Bounding Box (bbox) rather than DWITHIN for simple web requests
+        // We calculate a square bbox based on the radius
+        const offset = r / 111320; // Rough conversion from meters to degrees
+        const bbox = [
+            selectedPoint.lng - offset,
+            selectedPoint.lat - offset,
+            selectedPoint.lng + offset,
+            selectedPoint.lat + offset
+        ].join(',');
+
+        // Updated Endpoint to OGC API (Modern, JSON-first)
+        const apiUrl = `https://api.pdok.nl/kadaster/plu/ogc/v1_0/collections/Maatvoering/items?bbox=${bbox}&f=json`;
 
         try {
-            const res = await fetch(url);
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const res = await fetch(apiUrl);
+            if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
             
             const data = await res.json();
             
@@ -119,11 +118,11 @@
                 link.click();
                 statusDiv.innerText = `Success! Found ${data.features.length} features.`;
             } else {
-                statusDiv.innerText = "No features found in this radius.";
+                statusDiv.innerText = "No features found in this bbox.";
             }
         } catch (e) {
-            statusDiv.innerText = "Connection error. See console.";
-            console.error("WFS Error:", e);
+            statusDiv.innerText = "Error: Connection blocked or API down.";
+            console.error(e);
         }
     }
 </script>
