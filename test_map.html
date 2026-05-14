@@ -12,7 +12,7 @@
             box-shadow: 0 4px 20px rgba(0,0,0,0.4);
         }
         input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
-        button { width: 100%; cursor: pointer; padding: 12px; background: #28a745; color: white; border: none; border-radius: 6px; font-weight: bold; }
+        button { width: 100%; cursor: pointer; padding: 12px; background: #007bff; color: white; border: none; border-radius: 6px; font-weight: bold; }
         button:disabled { background: #ccc; }
         #status { font-size: 12px; margin-top: 10px; color: #555; line-height: 1.4; }
     </style>
@@ -23,26 +23,27 @@
     <strong style="color: #333;">Maatvoering Radius (m)</strong>
     <input type="number" id="radius" value="500">
     <button id="dlBtn" onclick="downloadData()">Download Maatvoering</button>
-    <div id="status">Click on the map to select an area. Data is fetched from Ruimtelijke Plannen (WFS).</div>
+    <div id="status">Zoom in and click to select an area.</div>
 </div>
 
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
+    // 1. Initialize Map (Back to original light style)
     const map = L.map('map').setView([52.2, 5.3], 7);
 
-    // Base Layer
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
         attribution: '©OpenStreetMap'
     }).addTo(map);
 
-    // WMS Layer for Ruimtelijke Plannen (Visual reference)
+    // 2. Visual Reference Layer
     const rpLayer = L.tileLayer.wms('https://service.pdok.nl/kadaster/plu/wms/v1_0', {
         layers: 'Maatvoering',
         format: 'image/png',
         transparent: true,
         version: '1.3.0',
+        minZoom: 14,
         attribution: '© PDOK'
     }).addTo(map);
 
@@ -58,7 +59,7 @@
         if (circlePreview) {
             circlePreview.setLatLng(selectedPoint).setRadius(r);
         } else {
-            circlePreview = L.circle(selectedPoint, { radius: r, color: '#28a745', fillOpacity: 0.3 }).addTo(map);
+            circlePreview = L.circle(selectedPoint, { radius: r, color: '#007bff', fillOpacity: 0.3 }).addTo(map);
         }
     }
 
@@ -67,7 +68,7 @@
     map.on('click', function(e) {
         selectedPoint = e.latlng;
         updateCircle();
-        statusDiv.innerHTML = `<b>Target set:</b> ${selectedPoint.lat.toFixed(4)}, ${selectedPoint.lng.toFixed(4)}`;
+        statusDiv.innerHTML = `<b>Target:</b> ${selectedPoint.lat.toFixed(4)}, ${selectedPoint.lng.toFixed(4)}`;
     });
 
     async function downloadData() {
@@ -78,25 +79,31 @@
         btn.disabled = true;
         statusDiv.innerText = "Querying PDOK WFS...";
 
-        // Constructing the WFS URL for Maatvoering
-        // We use the WFS 2.0.0 endpoint which corresponds to the PLU (Ruimtelijke Plannen)
+        // The specific WFS params for Ruimtelijke Plannen
         const baseUrl = "https://service.pdok.nl/kadaster/plu/wfs/v1_0";
-        const typeName = "plu:Maatvoering";
         
-        // Note: DWITHIN uses the SRS coordinates. PDOK WFS handles EPSG:4326 (Lat/Lon)
+        // Corrected CQL Filter: 
+        // 1. Geometry column is usually 'geometrie'
+        // 2. We explicitly use EPSG:4326 for the point
+        const cqlFilter = `DWITHIN(geometrie,POINT(${selectedPoint.lng} ${selectedPoint.lat}),${r},meters)`;
+
         const params = new URLSearchParams({
             service: 'WFS',
             version: '2.0.0',
             request: 'GetFeature',
-            typeNames: typeName,
+            typeNames: 'Maatvoering', // Removed 'plu:' prefix as it can cause 400 errors depending on the endpoint config
             outputFormat: 'application/json',
             srsName: 'EPSG:4326',
-            CQL_FILTER: `DWITHIN(geometrie,POINT(${selectedPoint.lng} ${selectedPoint.lat}),${r},meters)`
+            CQL_FILTER: cqlFilter
         });
 
         try {
             const response = await fetch(`${baseUrl}?${params.toString()}`);
-            if (!response.ok) throw new Error("Network response was not ok");
+            
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Server error: ${response.status}`);
+            }
             
             const data = await response.json();
             
@@ -105,15 +112,15 @@
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `maatvoering_${Math.round(selectedPoint.lat)}_${Math.round(selectedPoint.lng)}.geojson`;
+                a.download = `maatvoering_${Date.now()}.geojson`;
                 a.click();
                 statusDiv.innerText = `Success! Found ${data.features.length} features.`;
             } else {
-                statusDiv.innerText = "No Maatvoering data found in this specific radius.";
+                statusDiv.innerText = "No features found in this circle. Try a larger radius or a different spot.";
             }
         } catch (error) {
             console.error(error);
-            statusDiv.innerText = "Error fetching data. The radius might be too large or the service is busy.";
+            statusDiv.innerText = "Error fetching data. Check console for details.";
         } finally {
             btn.disabled = false;
         }
