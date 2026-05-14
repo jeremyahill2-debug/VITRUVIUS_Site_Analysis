@@ -1,100 +1,123 @@
 <!DOCTYPE html>
-<html style="height: 100%; margin: 0;">
+<html>
 <head>
-    <title>NL Maatvoering Downloader</title>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    
-    <!-- Leaflet CSS -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
-    
+    <title>NL Ruimtelijke Plannen Downloader</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        html, body { height: 100%; margin: 0; padding: 0; }
-        #map { height: 100vh; width: 100%; background: #222; }
+        body { margin: 0; font-family: sans-serif; background: #1a1a1a; }
+        #map { height: 100vh; width: 100%; background: #000; cursor: crosshair; }
         #ui {
-            position: absolute; top: 10px; right: 10px; z-index: 1000;
-            background: white; padding: 15px; border-radius: 8px; width: 220px;
-            box-shadow: 0 0 15px rgba(0,0,0,0.2); font-family: sans-serif;
+            position: absolute; top: 15px; right: 15px; z-index: 1000;
+            background: white; padding: 20px; border-radius: 12px; width: 240px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.4);
         }
-        input { width: 100%; padding: 8px; margin: 5px 0 10px 0; box-sizing: border-box; }
-        button { width: 100%; padding: 10px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
-        #status { margin-top: 10px; font-size: 12px; color: #444; }
+        input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
+        button { width: 100%; cursor: pointer; padding: 12px; background: #28a745; color: white; border: none; border-radius: 6px; font-weight: bold; }
+        button:disabled { background: #ccc; }
+        #status { font-size: 12px; margin-top: 10px; color: #555; line-height: 1.4; }
     </style>
 </head>
 <body>
 
 <div id="ui">
-    <b style="display:block; margin-bottom:5px;">Maatvoering Tool</b>
-    <label style="font-size: 12px;">Radius (meters):</label>
+    <strong style="color: #333;">Maatvoering Radius (m)</strong>
     <input type="number" id="radius" value="500">
-    <button id="dlBtn" onclick="downloadData()">Download Data</button>
-    <div id="status">Click the map to select a point.</div>
+    <button id="dlBtn" onclick="downloadData()">Download Maatvoering</button>
+    <div id="status">Click on the map to select an area. Data is fetched from Ruimtelijke Plannen (WFS).</div>
 </div>
 
 <div id="map"></div>
 
-<!-- Leaflet JS -->
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-    // Force a small delay to ensure the DOM is fully ready
-    window.onload = function() {
-        const map = L.map('map').setView([52.2, 5.3], 7);
+    const map = L.map('map').setView([52.2, 5.3], 7);
 
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; OpenStreetMap contributors'
-        }).addTo(map);
+    // Base Layer
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '©OpenStreetMap'
+    }).addTo(map);
 
-        // Visual Overlay for Ruimtelijke Plannen
-        L.tileLayer.wms('https://service.pdok.nl/kadaster/plu/wms/v1_0', {
-            layers: 'Maatvoering',
-            format: 'image/png',
-            transparent: true,
-            version: '1.3.0',
-            opacity: 0.6
-        }).addTo(map);
+    // WMS Layer for Ruimtelijke Plannen (Visual reference)
+    const rpLayer = L.tileLayer.wms('https://service.pdok.nl/kadaster/plu/wms/v1_0', {
+        layers: 'Maatvoering',
+        format: 'image/png',
+        transparent: true,
+        version: '1.3.0',
+        attribution: '© PDOK'
+    }).addTo(map);
 
-        let selectedPoint = null;
-        let circlePreview = null;
+    let selectedPoint = null;
+    let circlePreview = null;
 
-        map.on('click', function(e) {
-            selectedPoint = e.latlng;
-            const r = document.getElementById('radius').value;
-            if (circlePreview) {
-                circlePreview.setLatLng(selectedPoint).setRadius(r);
-            } else {
-                circlePreview = L.circle(selectedPoint, {radius: r, color: 'red'}).addTo(map);
-            }
-            document.getElementById('status').innerText = `Target: ${selectedPoint.lat.toFixed(4)}, ${selectedPoint.lng.toFixed(4)}`;
+    const radiusInput = document.getElementById('radius');
+    const statusDiv = document.getElementById('status');
+
+    function updateCircle() {
+        if (!selectedPoint) return;
+        const r = parseInt(radiusInput.value) || 0;
+        if (circlePreview) {
+            circlePreview.setLatLng(selectedPoint).setRadius(r);
+        } else {
+            circlePreview = L.circle(selectedPoint, { radius: r, color: '#28a745', fillOpacity: 0.3 }).addTo(map);
+        }
+    }
+
+    radiusInput.addEventListener('input', updateCircle);
+    
+    map.on('click', function(e) {
+        selectedPoint = e.latlng;
+        updateCircle();
+        statusDiv.innerHTML = `<b>Target set:</b> ${selectedPoint.lat.toFixed(4)}, ${selectedPoint.lng.toFixed(4)}`;
+    });
+
+    async function downloadData() {
+        if (!selectedPoint) return alert("Please click on the map first.");
+        
+        const r = radiusInput.value;
+        const btn = document.getElementById('dlBtn');
+        btn.disabled = true;
+        statusDiv.innerText = "Querying PDOK WFS...";
+
+        // Constructing the WFS URL for Maatvoering
+        // We use the WFS 2.0.0 endpoint which corresponds to the PLU (Ruimtelijke Plannen)
+        const baseUrl = "https://service.pdok.nl/kadaster/plu/wfs/v1_0";
+        const typeName = "plu:Maatvoering";
+        
+        // Note: DWITHIN uses the SRS coordinates. PDOK WFS handles EPSG:4326 (Lat/Lon)
+        const params = new URLSearchParams({
+            service: 'WFS',
+            version: '2.0.0',
+            request: 'GetFeature',
+            typeNames: typeName,
+            outputFormat: 'application/json',
+            srsName: 'EPSG:4326',
+            CQL_FILTER: `DWITHIN(geometrie,POINT(${selectedPoint.lng} ${selectedPoint.lat}),${r},meters)`
         });
 
-        window.downloadData = async function() {
-            if (!selectedPoint) return alert("Select a point on the map.");
-            const r = document.getElementById('radius').value;
-            const status = document.getElementById('status');
-            status.innerText = "Downloading...";
-
-            const url = `https://service.pdok.nl/kadaster/plu/wfs/v1_0?service=WFS&version=2.0.0&request=GetFeature&typeNames=plu:Maatvoering&outputFormat=application/json&srsName=EPSG:4326&CQL_FILTER=DWITHIN(geometrie,POINT(${selectedPoint.lng} ${selectedPoint.lat}),${r},meters)`;
-
-            try {
-                const res = await fetch(url);
-                const data = await res.json();
-                if (!data.features.length) {
-                    status.innerText = "No features found here.";
-                    return;
-                }
+        try {
+            const response = await fetch(`${baseUrl}?${params.toString()}`);
+            if (!response.ok) throw new Error("Network response was not ok");
+            
+            const data = await response.json();
+            
+            if (data.features && data.features.length > 0) {
                 const blob = new Blob([JSON.stringify(data)], {type: 'application/json'});
+                const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
-                a.href = URL.createObjectURL(blob);
-                a.download = "maatvoering.geojson";
+                a.href = url;
+                a.download = `maatvoering_${Math.round(selectedPoint.lat)}_${Math.round(selectedPoint.lng)}.geojson`;
                 a.click();
-                status.innerText = `Found ${data.features.length} features!`;
-            } catch (e) {
-                status.innerText = "Error fetching data.";
-                console.error(e);
+                statusDiv.innerText = `Success! Found ${data.features.length} features.`;
+            } else {
+                statusDiv.innerText = "No Maatvoering data found in this specific radius.";
             }
-        };
-    };
+        } catch (error) {
+            console.error(error);
+            statusDiv.innerText = "Error fetching data. The radius might be too large or the service is busy.";
+        } finally {
+            btn.disabled = false;
+        }
+    }
 </script>
 </body>
 </html>
