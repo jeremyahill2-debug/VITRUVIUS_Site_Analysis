@@ -2,92 +2,100 @@
 <html>
 <head>
     <title>NL GIS Downloader</title>
-    <link rel="stylesheet" href="[https://unpkg.com/leaflet@1.9.4/dist/leaflet.css](https://unpkg.com/leaflet@1.9.4/dist/leaflet.css)" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         body { margin: 0; font-family: sans-serif; background: #1a1a1a; }
-        #map { height: 100vh; width: 100%; background: #222; }
+        #map { height: 100vh; width: 100%; background: #000; }
         #ui {
             position: absolute; top: 15px; right: 15px; z-index: 1000;
-            background: white; padding: 15px; border-radius: 8px; width: 180px;
+            background: white; padding: 20px; border-radius: 12px; width: 220px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.4);
         }
-        button { width: 100%; margin-top: 10px; cursor: pointer; padding: 8px; background: #007bff; color: white; border: none; border-radius: 4px; }
-        #status { font-size: 11px; margin-top: 8px; color: #444; }
+        input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
+        button { width: 100%; cursor: pointer; padding: 12px; background: #007bff; color: white; border: none; border-radius: 6px; font-weight: bold; }
+        #status { font-size: 12px; margin-top: 10px; color: #555; line-height: 1.4; }
     </style>
 </head>
 <body>
 
 <div id="ui">
-    <strong>Radius (meters)</strong>
-    <input type="number" id="radius" value="1000" style="width: 100%;">
-    <button onclick="downloadData()">Download Data</button>
-    <div id="status">Click on the Netherlands</div>
+    <strong style="color: #333;">Search Radius (meters)</strong>
+    <input type="number" id="radius" value="1000">
+    <button onclick="downloadData()">Download GIS Data</button>
+    <div id="status">Click inside the Netherlands to select a location.</div>
 </div>
 
 <div id="map"></div>
 
-<script src="[https://unpkg.com/leaflet@1.9.4/dist/leaflet.js](https://unpkg.com/leaflet@1.9.4/dist/leaflet.js)"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-    // 1. Setup Map
+    // 1. Setup Map with a darker, cleaner base
     const map = L.map('map').setView([52.2, 5.3], 7);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+    
+    // Using CartoDB Positron (very light) or Voyager
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        attribution: '©OpenStreetMap, ©CartoDB'
+    }).addTo(map);
 
     let selectedPoint = null;
     let circlePreview = null;
 
-    // 2. Hardcoded simplified NL Boundary (Avoids CORS issues)
-    // This is a simplified "hull" of the Netherlands to ensure the mask works immediately.
-    const nlHull = [
-        [53.45, 6.84], [53.35, 7.21], [52.88, 7.07], [52.41, 7.05], [51.85, 6.85], 
-        [51.24, 6.03], [50.76, 6.08], [50.75, 5.68], [51.21, 5.37], [51.27, 4.25], 
-        [51.45, 3.36], [51.74, 3.73], [52.32, 4.43], [52.71, 4.61], [53.18, 4.79], 
-        [53.48, 5.42], [53.45, 6.84]
-    ];
+    // 2. Create the "Grey Out" using 4 massive rectangles around the NL
+    // This avoids the 'black screen' polygon error
+    const maskStyle = { color: 'none', fillColor: '#333', fillOpacity: 0.6, interactive: false };
+    
+    const nl = { n: 53.7, s: 50.7, w: 3.2, e: 7.3 }; // Rough box around NL
 
-    const worldLimit = [[90, -180], [90, 180], [-90, 180], [-90, -180], [90, -180]];
+    L.rectangle([[90, -180], [nl.n, 180]], maskStyle).addTo(map); // North
+    L.rectangle([[nl.s, -180], [-90, 180]], maskStyle).addTo(map); // South
+    L.rectangle([[nl.n, -180], [nl.s, nl.w]], maskStyle).addTo(map); // West
+    L.rectangle([[nl.n, nl.e], [nl.s, 180]], maskStyle).addTo(map); // East
 
-    // Create Mask
-    L.polygon([worldLimit, nlHull], {
-        fillColor: '#000',
-        fillOpacity: 0.75,
-        color: '#222',
-        weight: 2,
-        interactive: false
-    }).addTo(map);
-
-    // 3. Interaction
+    // 3. Map Click Interaction
     map.on('click', function(e) {
         selectedPoint = e.latlng;
         const r = parseInt(document.getElementById('radius').value);
+        
         if (circlePreview) map.removeLayer(circlePreview);
-        circlePreview = L.circle(selectedPoint, { radius: r, color: 'cyan' }).addTo(map);
-        document.getElementById('status').innerText = `Point: ${selectedPoint.lat.toFixed(3)}, ${selectedPoint.lng.toFixed(3)}`;
+        circlePreview = L.circle(selectedPoint, { 
+            radius: r, 
+            color: '#ff4757', 
+            fillColor: '#ff4757', 
+            fillOpacity: 0.4 
+        }).addTo(map);
+        
+        document.getElementById('status').innerHTML = `<b>Target Set:</b><br>${selectedPoint.lat.toFixed(4)}, ${selectedPoint.lng.toFixed(4)}`;
     });
 
-    // 4. Download Logic (PDOK)
+    // 4. PDOK WFS Downloader
     async function downloadData() {
-        if (!selectedPoint) return alert("Select a point on the map.");
+        if (!selectedPoint) return alert("Please click the map first.");
+        
         const r = document.getElementById('radius').value;
         const status = document.getElementById('status');
-        status.innerText = "Downloading...";
+        status.innerText = "Querying PDOK (Top10NL Buildings)...";
 
         // Querying "top10nl:gebouw" (Buildings)
-        const url = `[https://service.pdok.nl/brt/top10nl/wfs/v1_0?service=WFS&version=2.0.0&request=GetFeature&typeNames=top10nl:gebouw&outputFormat=application/json&srsName=EPSG:4326&CQL_FILTER=DWITHIN(geometrie,POINT($](https://service.pdok.nl/brt/top10nl/wfs/v1_0?service=WFS&version=2.0.0&request=GetFeature&typeNames=top10nl:gebouw&outputFormat=application/json&srsName=EPSG:4326&CQL_FILTER=DWITHIN(geometrie,POINT($){selectedPoint.lng} ${selectedPoint.lat}),${r},meters)`;
+        const url = `https://service.pdok.nl/brt/top10nl/wfs/v1_0?service=WFS&version=2.0.0&request=GetFeature&typeNames=top10nl:gebouw&outputFormat=application/json&srsName=EPSG:4326&CQL_FILTER=DWITHIN(geometrie,POINT(${selectedPoint.lng} ${selectedPoint.lat}),${r},meters)`;
 
         try {
             const res = await fetch(url);
             const data = await res.json();
-            if (data.features.length === 0) {
-                status.innerText = "No objects found.";
+            
+            if (!data.features || data.features.length === 0) {
+                status.innerText = "No buildings found in this radius. Try a larger number.";
                 return;
             }
+
             const blob = new Blob([JSON.stringify(data)], {type: 'application/json'});
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
-            a.download = 'netherlands_gis_data.geojson';
+            a.download = `nl_buildings_${r}m.geojson`;
             a.click();
-            status.innerText = `Done! Got ${data.features.length} items.`;
+            
+            status.innerText = `Success! Downloaded ${data.features.length} buildings.`;
         } catch (e) {
-            status.innerText = "Fetch error (Check Radius)";
+            status.innerText = "Error: Radius might be too large or server is busy.";
         }
     }
 </script>
