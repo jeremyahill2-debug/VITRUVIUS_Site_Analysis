@@ -1,31 +1,30 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>NL Maatvoering - National Extractor</title>
+    <title>NL Omgevingswet - National Extractor</title>
     <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
     <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
     <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
     <style>
         body { margin: 0; font-family: sans-serif; }
-        #map { height: 100vh; width: 100%; background: #222; }
+        #map { height: 100vh; width: 100%; background: #1a1a1a; }
         #ui {
             position: absolute; top: 20px; left: 20px; z-index: 10;
-            background: white; padding: 20px; border-radius: 12px; width: 260px;
+            background: white; padding: 20px; border-radius: 12px; width: 280px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.3);
         }
-        input { width: 100%; padding: 8px; margin: 10px 0; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
         button { width: 100%; cursor: pointer; padding: 12px; background: #007bff; color: white; border: none; border-radius: 6px; font-weight: bold; }
-        #status { font-size: 12px; margin-top: 10px; color: #d9534f; font-weight: bold; }
+        #status { font-size: 12px; margin-top: 10px; color: #444; }
+        .hint { font-size: 11px; color: #888; margin-bottom: 10px; }
     </style>
 </head>
 <body>
 
 <div id="ui">
-    <h3>National Maatvoering</h3>
-    <label>Radius (meters)</label>
-    <input type="number" id="radius" value="250">
-    <button onclick="extractFromTiles()">Extract Visible Data</button>
-    <div id="status">Zoom in to a city center!</div>
+    <h3>Omgevingswet Extractor</h3>
+    <p class="hint">Zoom in until blue shapes appear. This data covers all new spatial plans (2024-2026).</p>
+    <button onclick="extractData()">Extract Selection</button>
+    <div id="status">Waiting for map load...</div>
 </div>
 
 <div id="map"></div>
@@ -34,31 +33,33 @@
     const map = new maplibregl.Map({
         container: 'map',
         style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
-        center: [4.46, 51.92], // Start in Rotterdam/Delft area
-        zoom: 15
+        center: [4.46, 51.92], 
+        zoom: 14
     });
 
     map.on('load', () => {
-        // Updated PDOK Vector Tile source
-        map.addSource('plu_vt', {
+        // New 2026 PDOK Omgevingswet Vector Tile Source
+        map.addSource('omgevingswet', {
             type: 'vector',
-            tiles: ['https://service.pdok.nl/kadaster/plu/v1_0/vt/tiles/{z}/{x}/{y}.pbf'],
+            tiles: ['https://api.pdok.nl/omgevingswet/v2/tiles/actueel/epsg:3857/{z}/{x}/{y}.pbf'],
             minzoom: 12,
             maxzoom: 16
         });
 
-        // PDOK Vector tiles often use lowercase names for layers.
-        // We add the layer with a bright color to verify it's there.
+        // Add the geometry layer (This covers Maatvoering, Bouwvlakken, etc.)
         map.addLayer({
-            'id': 'maatvoering-viz',
-            'type': 'line',
-            'source': 'plu_vt',
-            'source-layer': 'maatvoering', // Confirmed ID
+            'id': 'ow-geometrie',
+            'type': 'fill',
+            'source': 'omgevingswet',
+            'source-layer': 'geometrie',
             'paint': {
-                'line-color': '#00ff00',
-                'line-width': 2
+                'fill-color': '#007bff',
+                'fill-opacity': 0.4,
+                'fill-outline-color': '#ffffff'
             }
         });
+
+        document.getElementById('status').innerText = "Map Ready. Zoom in to a city center.";
     });
 
     let clickedPoint = null;
@@ -67,56 +68,47 @@
     map.on('click', (e) => {
         clickedPoint = e.lngLat;
         if (marker) marker.remove();
-        marker = new maplibregl.Marker({color: "#ff0000"}).setLngLat(e.lngLat).addTo(map);
+        marker = new maplibregl.Marker().setLngLat(e.lngLat).addTo(map);
         document.getElementById('status').innerText = "Location set. Press Extract.";
-        document.getElementById('status').style.color = "#28a745";
     });
 
-    function extractFromTiles() {
-        if (!clickedPoint) return alert("Click the map first!");
-        
-        const radiusMeters = parseInt(document.getElementById('radius').value);
-        const center = [clickedPoint.lng, clickedPoint.lat];
+    function extractData() {
+        if (!clickedPoint) return alert("Click map first!");
 
-        // This queries EVERYTHING the map has currently downloaded
-        const features = map.querySourceFeatures('plu_vt', {
-            sourceLayer: 'maatvoering'
+        // querySourceFeatures is best for extracting data across the whole tile
+        const features = map.querySourceFeatures('omgevingswet', {
+            sourceLayer: 'geometrie'
         });
 
         if (features.length === 0) {
-            document.getElementById('status').innerText = "Zero features found in browser memory. Are the green lines visible?";
-            document.getElementById('status').style.color = "#d9534f";
+            document.getElementById('status').innerText = "No data in memory. Is the area blue?";
             return;
         }
 
-        // Filter by radius
+        // Use Turf to filter by distance (250m radius)
+        const center = [clickedPoint.lng, clickedPoint.lat];
         const filtered = features.filter(f => {
             try {
-                const distance = turf.distance(center, turf.center(f), {units: 'meters'});
-                return distance <= radiusMeters;
-            } catch (err) { return false; }
+                const dist = turf.distance(center, turf.center(f), {units: 'meters'});
+                return dist <= 250;
+            } catch(e) { return false; }
         });
 
         if (filtered.length > 0) {
-            // Remove duplicates (Vector tiles often repeat features across tile boundaries)
-            const uniqueFeatures = Array.from(new Set(filtered.map(f => JSON.stringify(f.geometry + JSON.stringify(f.properties)))))
-                .map(str => filtered.find(f => JSON.stringify(f.geometry + JSON.stringify(f.properties)) === str));
-
-            const collection = turf.featureCollection(uniqueFeatures.map(f => ({
+            const collection = turf.featureCollection(filtered.map(f => ({
                 type: "Feature",
                 geometry: f.geometry,
                 properties: f.properties
             })));
 
             const blob = new Blob([JSON.stringify(collection)], {type: 'application/json'});
-            const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
-            a.href = url;
-            a.download = `maatvoering_export.geojson`;
+            a.href = URL.createObjectURL(blob);
+            a.download = `omgevingswet_extract.geojson`;
             a.click();
-            document.getElementById('status').innerText = `Success! Exported ${uniqueFeatures.length} items.`;
+            document.getElementById('status').innerText = `Success! Found ${filtered.length} features.`;
         } else {
-            document.getElementById('status').innerText = "No features inside that circle.";
+            document.getElementById('status').innerText = "Zero features within 250m of click.";
         }
     }
 </script>
