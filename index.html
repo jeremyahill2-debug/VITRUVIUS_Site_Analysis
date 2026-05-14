@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Map of the Netherlands</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        body { margin: 0; padding: 0; }
+        #map { 
+            height: 100vh; /* Full screen height */
+            width: 100%; 
+        }
+    </style>
+</head>
+<body>
+
+    <div id="map"></div>
+
+    <!-- Leaflet JavaScript -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <script>
+        // Initialize the map and set its view to the center of the Netherlands
+        // Coordinates: [Latitude, Longitude], Zoom level: 7
+        var map = L.map('map').setView([52.1326, 5.2913], 7);
+
+        // Add OpenStreetMap tile layer
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        // Optional: Add a marker for the capital (Amsterdam)
+        L.marker([52.3676, 4.9041]).addTo(map)
+            .bindPopup('Amsterdam')
+            .openPopup();
+    </script>
+</body>
+</html>
