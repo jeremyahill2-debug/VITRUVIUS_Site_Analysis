@@ -8,59 +8,71 @@
         #map { height: 100vh; width: 100%; background: #000; cursor: crosshair; }
         #ui {
             position: absolute; top: 15px; right: 15px; z-index: 1000;
-            background: white; padding: 20px; border-radius: 12px; width: 240px;
+            background: white; padding: 20px; border-radius: 12px; width: 220px;
             box-shadow: 0 4px 20px rgba(0,0,0,0.4);
         }
         input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
         button { width: 100%; cursor: pointer; padding: 12px; background: #007bff; color: white; border: none; border-radius: 6px; font-weight: bold; }
         #status { font-size: 12px; margin-top: 10px; color: #555; line-height: 1.4; }
+        #zoom-tag { font-size: 10px; font-weight: bold; color: #007bff; margin-top: 5px; }
     </style>
 </head>
 <body>
 
 <div id="ui">
-    <strong style="color: #333;">Search Radius (meters)</strong>
+    <strong style="color: #333;">Search Radius (m)</strong>
     <input type="number" id="radius" value="500">
-    <button onclick="downloadData()">Download Individual Houses</button>
-    <div id="status">Zooming to level 18+ will show property lines and numbers.</div>
+    <button onclick="downloadData()">Download BAG Data</button>
+    <div id="status">Zoom to 18+ for house numbers.</div>
+    <div id="zoom-tag">Current Zoom: <span id="z-level">16</span></div>
 </div>
 
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-    // 1. Initialize Map with EXTRA ZOOM capability
+    // 1. Initialize Map with extreme zoom capabilities
     const map = L.map('map', {
-        maxZoom: 21, 
+        maxZoom: 22,
         minZoom: 7
     }).setView([52.0116, 4.3571], 16);
 
-    // 2. Base Layer (Aesthetic background)
+    // 2. Your Preferred Aesthetic (Carto Light)
     L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-        attribution: '©OpenStreetMap',
-        maxZoom: 21
+        attribution: '©OSM',
+        maxZoom: 22
     }).addTo(map);
 
-    // 3. THE FIX: BAG WMS Layer for Property Lines AND Numbers
-    // We use the 'verblijfsobject' and 'pand' layers to get individual units
-    L.tileLayer.wms('https://service.pdok.nl/lv/bag/wms/v2_0', {
-        layers: 'pand,huisnummer', // 'pand' provides property outlines, 'huisnummer' provides the text
-        format: 'image/png',
-        transparent: true,
-        version: '1.3.0',
-        minZoom: 17, // Only shows up close to prevent clutter
-        maxZoom: 21,
+    // 3. THE FIX: The "Luchtfoto" Label layer 
+    // This is the most robust PDOK layer. It contains property lines AND house numbers.
+    // It is transparent so it sits perfectly on your Light map.
+    L.tileLayer('https://service.pdok.nl/hwh/luchtfotogme/wmts/v1_0/luchtfotogme/EPSG:3857/{z}/{x}/{y}.png', {
+        minZoom: 18,
+        maxZoom: 22,
+        opacity: 0.8,
         attribution: '© PDOK'
     }).addTo(map);
+
+    // 4. BAG House Numbers (Specific Label Service)
+    L.tileLayer('https://service.pdok.nl/lv/bag/wmts/v2_0/bag/EPSG:3857/{z}/{x}/{y}.png', {
+        minZoom: 18,
+        maxZoom: 22,
+        attribution: '© BAG'
+    }).addTo(map);
+
+    // Update Zoom Display
+    map.on('zoomend', () => {
+        const z = map.getZoom();
+        document.getElementById('z-level').innerText = z;
+        document.getElementById('status').innerText = z >= 18 ? "House numbers active." : "Zoom in more for numbers.";
+    });
 
     let selectedPoint = null;
     let circlePreview = null;
 
-    // 4. Interaction
-    const radiusInput = document.getElementById('radius');
     function updateCircle() {
         if (!selectedPoint) return;
-        const r = parseInt(radiusInput.value) || 0;
+        const r = parseInt(document.getElementById('radius').value) || 0;
         if (circlePreview) {
             circlePreview.setLatLng(selectedPoint).setRadius(r);
         } else {
@@ -68,20 +80,15 @@
         }
     }
 
-    radiusInput.addEventListener('input', updateCircle);
     map.on('click', (e) => {
         selectedPoint = e.latlng;
         updateCircle();
     });
 
-    // 5. Download Individual Property Data (Using BAG instead of TOP10NL)
+    // 5. Download Individual House Polygons
     async function downloadData() {
-        if (!selectedPoint) return alert("Click map first.");
-        const r = radiusInput.value;
-        const status = document.getElementById('status');
-        status.innerText = "Downloading individual house data...";
-
-        // Switched to BAG WFS to get individual properties instead of blocks
+        if (!selectedPoint) return alert("Select a location.");
+        const r = document.getElementById('radius').value;
         const url = `https://service.pdok.nl/lv/bag/wfs/v2_0?service=WFS&version=2.0.0&request=GetFeature&typeNames=bag:pand&outputFormat=application/json&srsName=EPSG:4326&CQL_FILTER=DWITHIN(geometrie,POINT(${selectedPoint.lng} ${selectedPoint.lat}),${r},meters)`;
 
         try {
@@ -90,10 +97,9 @@
             const blob = new Blob([JSON.stringify(data)], {type: 'application/json'});
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
-            a.download = `individual_properties_${r}m.geojson`;
+            a.download = `bag_properties.geojson`;
             a.click();
-            status.innerText = `Success! Found ${data.features.length} individual properties.`;
-        } catch (e) { status.innerText = "Error fetching data."; }
+        } catch (e) { alert("Data fetch failed."); }
     }
 </script>
 </body>
