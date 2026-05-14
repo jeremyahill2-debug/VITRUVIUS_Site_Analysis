@@ -51,18 +51,35 @@
     L.rectangle([[nl.n, -180], [nl.s, nl.w]], maskStyle).addTo(map); // West
     L.rectangle([[nl.n, nl.e], [nl.s, 180]], maskStyle).addTo(map); // East
 
-    // 3. Map Click Interaction
+// 3. Interaction Logic
+    const radiusInput = document.getElementById('radius');
+
+    // Function to update the circle's size
+    function updateCircle() {
+        if (!selectedPoint) return;
+        
+        const r = parseInt(radiusInput.value) || 0; // Fallback to 0 if empty
+        
+        if (circlePreview) {
+            circlePreview.setRadius(r); // Dynamically resize
+        } else {
+            // If no circle exists yet, create one
+            circlePreview = L.circle(selectedPoint, { 
+                radius: r, 
+                color: '#ff4757', 
+                fillColor: '#ff4757', 
+                fillOpacity: 0.4 
+            }).addTo(map);
+        }
+    }
+
+    // Listen for typing or clicking the up/down arrows in the input box
+    radiusInput.addEventListener('input', updateCircle);
+
+    // Map Click Interaction
     map.on('click', function(e) {
         selectedPoint = e.latlng;
-        const r = parseInt(document.getElementById('radius').value);
-        
-        if (circlePreview) map.removeLayer(circlePreview);
-        circlePreview = L.circle(selectedPoint, { 
-            radius: r, 
-            color: '#ff4757', 
-            fillColor: '#ff4757', 
-            fillOpacity: 0.4 
-        }).addTo(map);
+        updateCircle(); // Create/move the circle when clicking
         
         document.getElementById('status').innerHTML = `<b>Target Set:</b><br>${selectedPoint.lat.toFixed(4)}, ${selectedPoint.lng.toFixed(4)}`;
     });
