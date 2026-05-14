@@ -1,34 +1,35 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>NL Maatvoering Downloader - 2026 Stable</title>
+    <title>NL Maatvoering - 2026 OGC Fix</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { margin: 0; font-family: sans-serif; background: #1a1a1a; }
+        body { margin: 0; font-family: sans-serif; background: #f4f4f4; }
         #map { height: 100vh; width: 100%; }
         #ui {
             position: absolute; top: 20px; left: 20px; z-index: 1000;
-            background: white; padding: 20px; border-radius: 12px; width: 260px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            background: white; padding: 20px; border-radius: 12px; width: 280px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.2);
         }
-        button { width: 100%; cursor: pointer; padding: 12px; background: #28a745; color: white; border: none; border-radius: 6px; font-weight: bold; }
-        #status { font-size: 13px; margin-top: 10px; color: #555; }
+        button { width: 100%; cursor: pointer; padding: 12px; background: #0052cc; color: white; border: none; border-radius: 6px; font-weight: bold; }
+        #status { font-size: 13px; margin-top: 10px; color: #333; line-height: 1.4; }
+        .info { font-size: 11px; color: #666; margin-bottom: 10px; }
     </style>
 </head>
 <body>
 
 <div id="ui">
-    <h3>Maatvoering Extractor</h3>
-    <p style="font-size: 11px; color: #888;">Click map in a built-up area, then click Download.</p>
-    <button onclick="downloadMaatvoering()">Download Area (500m)</button>
-    <div id="status">Click map to set target.</div>
+    <h3>NL Planning Extractor</h3>
+    <p class="info">This uses the 2026 Omgevingswet API. Click a location in a city (e.g., Delft or Rotterdam) and press download.</p>
+    <button onclick="fetchData()">Download Maatvoering</button>
+    <div id="status">Waiting for map click...</div>
 </div>
 
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-    const map = L.map('map').setView([52.09, 5.12], 13); // Start in Utrecht
+    const map = L.map('map').setView([52.0, 4.3], 13); // Centered near Delft
     L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
 
     let marker = null;
@@ -38,53 +39,57 @@
         selectedPoint = e.latlng;
         if (marker) marker.remove();
         marker = L.marker(e.latlng).addTo(map);
-        document.getElementById('status').innerText = "Location set. Ready.";
+        document.getElementById('status').innerText = "Location set. Ready to query.";
     });
 
-    async function downloadMaatvoering() {
-        if (!selectedPoint) return alert("Click the map first!");
+    async function fetchData() {
+        if (!selectedPoint) return alert("Please click the map first.");
         const status = document.getElementById('status');
-        status.innerText = "Querying PDOK...";
+        status.innerText = "Connecting to Omgevingswet API...";
 
-        // The correct 2026 WFS endpoint for planning data
-        const baseUrl = "https://service.pdok.nl/kadaster/plu/wfs/v1_0";
+        // 1. 2026 OGC API Features Endpoint
+        const baseUrl = "https://api.pdok.nl/kadaster/omgevingswet-geometrieen/ogc/v2";
+        const collection = "productie-actueel";
         
-        // We use EPSG:4326 but PDOK WFS 2.0.0 expects Lat/Lon order in the filter
-        const cql = `DWITHIN(geometrie,POINT(${selectedPoint.lat} ${selectedPoint.lng}),500,meters)`;
-        
-        const params = new URLSearchParams({
-            service: 'WFS',
-            version: '2.0.0',
-            request: 'GetFeature',
-            typeName: 'maatvoering',
-            outputFormat: 'application/json',
-            srsName: 'EPSG:4326',
-            CQL_FILTER: cql
-        });
+        // 2. Create Bounding Box (BBOX) for the search (approx 200m)
+        const offset = 0.002;
+        const bbox = [
+            selectedPoint.lng - offset,
+            selectedPoint.lat - offset,
+            selectedPoint.lng + offset,
+            selectedPoint.lat + offset
+        ].join(',');
 
-        // Using a reliable CORS proxy
-        const fullUrl = `${baseUrl}?${params.toString()}`;
-        const proxiedUrl = `https://corsproxy.io/?${encodeURIComponent(fullUrl)}`;
+        // 3. Construct URL - requesting JSON format
+        const url = `${baseUrl}/collections/${collection}/items?bbox=${bbox}&f=json&limit=100`;
+        const proxiedUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
 
         try {
-            const res = await fetch(proxiedUrl);
-            if (!res.ok) throw new Error(`Server Error: ${res.status}`);
+            const response = await fetch(proxiedUrl);
             
-            const data = await res.json();
+            if (!response.ok) {
+                if (response.status === 404) throw new Error("API endpoint moved or collection renamed.");
+                throw new Error(`Server returned ${response.status}`);
+            }
+
+            const data = await response.json();
 
             if (data.features && data.features.length > 0) {
+                // Filter specifically for Maatvoering in the properties if possible
+                // Otherwise, download the whole geometry set for the area
                 const blob = new Blob([JSON.stringify(data)], {type: 'application/json'});
+                const downloadUrl = URL.createObjectURL(blob);
                 const a = document.createElement('a');
-                a.href = URL.createObjectURL(blob);
-                a.download = `maatvoering_extract.geojson`;
+                a.href = downloadUrl;
+                a.download = `omgevingswet_data.geojson`;
                 a.click();
-                status.innerText = `Success! Found ${data.features.length} items.`;
+                status.innerText = `Success! Found ${data.features.length} planning objects.`;
             } else {
-                status.innerText = "No data found here. Try a city center.";
+                status.innerText = "No data found in this 200m area. Try a more dense urban area.";
             }
         } catch (err) {
             console.error(err);
-            status.innerText = "Error. Check console (F12).";
+            status.innerText = `Error: ${err.message}`;
         }
     }
 </script>
