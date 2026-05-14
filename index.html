@@ -5,7 +5,7 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         body { margin: 0; font-family: sans-serif; background: #1a1a1a; }
-        #map { height: 100vh; width: 100%; background: #000; }
+        #map { height: 100vh; width: 100%; background: #000; cursor: crosshair; }
         #ui {
             position: absolute; top: 15px; right: 15px; z-index: 1000;
             background: white; padding: 20px; border-radius: 12px; width: 220px;
@@ -13,6 +13,7 @@
         }
         input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
         button { width: 100%; cursor: pointer; padding: 12px; background: #007bff; color: white; border: none; border-radius: 6px; font-weight: bold; }
+        button:hover { background: #0056b3; }
         #status { font-size: 12px; margin-top: 10px; color: #555; line-height: 1.4; }
     </style>
 </head>
@@ -22,23 +23,26 @@
     <strong style="color: #333;">Search Radius (meters)</strong>
     <input type="number" id="radius" value="1000">
     <button onclick="downloadData()">Download GIS Data</button>
-    <div id="status">Click inside the Netherlands to select a location.</div>
+    <div id="status">Click anywhere in the Netherlands to select a location.</div>
 </div>
 
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
+    // 1. INITIALIZE THE MAP (The missing piece!)
+    const map = L.map('map').setView([52.2, 5.3], 7);
 
+    // 2. ADD THE TILE LAYER (The map images)
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        attribution: '©OpenStreetMap, ©CartoDB'
+    }).addTo(map);
 
-    // 1. Updated Mask Logic (Ensure 'interactive: false' is on all rectangles)
-    const maskStyle = { 
-        color: 'none', 
-        fillColor: '#333', 
-        fillOpacity: 0.6, 
-        interactive: false // THIS IS KEY: allows clicking through the mask
-    };
-    
+    let selectedPoint = null;
+    let circlePreview = null;
+
+    // 3. ADD THE MASK (Grey out everything but NL)
+    const maskStyle = { color: 'none', fillColor: '#333', fillOpacity: 0.6, interactive: false };
     const nl = { n: 53.7, s: 50.7, w: 3.2, e: 7.3 };
 
     L.rectangle([[90, -180], [nl.n, 180]], maskStyle).addTo(map); 
@@ -46,18 +50,16 @@
     L.rectangle([[nl.n, -180], [nl.s, nl.w]], maskStyle).addTo(map); 
     L.rectangle([[nl.n, nl.e], [nl.s, 180]], maskStyle).addTo(map); 
 
-    // 2. Improved Interaction Logic
+    // 4. INTERACTION LOGIC
     const radiusInput = document.getElementById('radius');
 
     function updateCircle() {
         if (!selectedPoint) return;
-        
         const r = parseInt(radiusInput.value) || 0;
         
         if (circlePreview) {
-            // Update both position and radius so it "moves" to the new click
-            circlePreview.setLatLng(selectedPoint);
-            circlePreview.setRadius(r);
+            circlePreview.setLatLng(selectedPoint); // Move to new click
+            circlePreview.setRadius(r);             // Set new radius
         } else {
             circlePreview = L.circle(selectedPoint, { 
                 radius: r, 
@@ -68,60 +70,27 @@
         }
     }
 
-    // Update size when typing
+    // Listener for input box changes
     radiusInput.addEventListener('input', updateCircle);
 
-    // Update position and size when clicking (allows unlimited relocation)
+    // Listener for map clicks
     map.on('click', function(e) {
         selectedPoint = e.latlng;
-        updateCircle(); 
-        
-        document.getElementById('status').innerHTML = `<b>New Target Set:</b><br>${selectedPoint.lat.toFixed(4)}, ${selectedPoint.lng.toFixed(4)}`;
-    });
-
-
-    // 3. Interaction Logic
-    const radiusInput = document.getElementById('radius');
-
-    // Function to update the circle's size
-    function updateCircle() {
-        if (!selectedPoint) return;
-        
-        const r = parseInt(radiusInput.value) || 0; // Fallback to 0 if empty
-        
-        if (circlePreview) {
-            circlePreview.setRadius(r); // Dynamically resize
-        } else {
-            // If no circle exists yet, create one
-            circlePreview = L.circle(selectedPoint, { 
-                radius: r, 
-                color: '#ff4757', 
-                fillColor: '#ff4757', 
-                fillOpacity: 0.4 
-            }).addTo(map);
-        }
-    }
-
-    // Listen for typing or clicking the up/down arrows in the input box
-    radiusInput.addEventListener('input', updateCircle);
-
-    // Map Click Interaction
-    map.on('click', function(e) {
-        selectedPoint = e.latlng;
-        updateCircle(); // Create/move the circle when clicking
-        
+        updateCircle();
         document.getElementById('status').innerHTML = `<b>Target Set:</b><br>${selectedPoint.lat.toFixed(4)}, ${selectedPoint.lng.toFixed(4)}`;
     });
 
-    // 4. PDOK WFS Downloader
+    // 5. DOWNLOAD DATA FROM PDOK
     async function downloadData() {
-        if (!selectedPoint) return alert("Please click the map first.");
+        if (!selectedPoint) {
+            alert("Please click the map first.");
+            return;
+        }
         
-        const r = document.getElementById('radius').value;
+        const r = radiusInput.value;
         const status = document.getElementById('status');
-        status.innerText = "Querying PDOK (Top10NL Buildings)...";
+        status.innerText = "Querying PDOK database...";
 
-        // Querying "top10nl:gebouw" (Buildings)
         const url = `https://service.pdok.nl/brt/top10nl/wfs/v1_0?service=WFS&version=2.0.0&request=GetFeature&typeNames=top10nl:gebouw&outputFormat=application/json&srsName=EPSG:4326&CQL_FILTER=DWITHIN(geometrie,POINT(${selectedPoint.lng} ${selectedPoint.lat}),${r},meters)`;
 
         try {
