@@ -6,17 +6,16 @@
     <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
     <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
     <style>
-        body { margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        #map { height: 100vh; width: 100%; }
+        body { margin: 0; font-family: sans-serif; }
+        #map { height: 100vh; width: 100%; background: #222; }
         #ui {
-            position: absolute; top: 20px; left: 20px; z-index: 1;
+            position: absolute; top: 20px; left: 20px; z-index: 10;
             background: white; padding: 20px; border-radius: 12px; width: 260px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.3);
         }
-        h3 { margin: 0 0 10px 0; font-size: 16px; color: #333; }
         input { width: 100%; padding: 8px; margin: 10px 0; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
         button { width: 100%; cursor: pointer; padding: 12px; background: #007bff; color: white; border: none; border-radius: 6px; font-weight: bold; }
-        #status { font-size: 12px; margin-top: 10px; color: #666; line-height: 1.4; }
+        #status { font-size: 12px; margin-top: 10px; color: #d9534f; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -24,68 +23,73 @@
 <div id="ui">
     <h3>National Maatvoering</h3>
     <label>Radius (meters)</label>
-    <input type="number" id="radius" value="100">
+    <input type="number" id="radius" value="250">
     <button onclick="extractFromTiles()">Extract Visible Data</button>
-    <div id="status">Zoom in to a neighborhood until lines appear, then click a point.</div>
+    <div id="status">Zoom in to a city center!</div>
 </div>
 
 <div id="map"></div>
 
 <script>
-    // Initialize the map
     const map = new maplibregl.Map({
         container: 'map',
         style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
-        center: [5.3, 52.2],
-        zoom: 7
+        center: [4.46, 51.92], // Start in Rotterdam/Delft area
+        zoom: 15
     });
 
     map.on('load', () => {
-        // Add PDOK Vector Tile Source for Ruimtelijke Plannen
-        map.addSource('plu', {
+        // Updated PDOK Vector Tile source
+        map.addSource('plu_vt', {
             type: 'vector',
             tiles: ['https://service.pdok.nl/kadaster/plu/v1_0/vt/tiles/{z}/{x}/{y}.pbf'],
-            minzoom: 14,
+            minzoom: 12,
             maxzoom: 16
         });
 
-        // Add the Maatvoering Layer visually
+        // PDOK Vector tiles often use lowercase names for layers.
+        // We add the layer with a bright color to verify it's there.
         map.addLayer({
-            'id': 'maatvoering-layer',
+            'id': 'maatvoering-viz',
             'type': 'line',
-            'source': 'plu',
-            'source-layer': 'maatvoering',
+            'source': 'plu_vt',
+            'source-layer': 'maatvoering', // Confirmed ID
             'paint': {
                 'line-color': '#00ff00',
-                'line-width': 2,
-                'line-opacity': 0.8
+                'line-width': 2
             }
         });
     });
 
     let clickedPoint = null;
+    let marker = null;
 
     map.on('click', (e) => {
         clickedPoint = e.lngLat;
-        document.getElementById('status').innerText = `Location Set: ${clickedPoint.lat.toFixed(4)}, ${clickedPoint.lng.toFixed(4)}`;
+        if (marker) marker.remove();
+        marker = new maplibregl.Marker({color: "#ff0000"}).setLngLat(e.lngLat).addTo(map);
+        document.getElementById('status').innerText = "Location set. Press Extract.";
+        document.getElementById('status').style.color = "#28a745";
     });
 
     function extractFromTiles() {
         if (!clickedPoint) return alert("Click the map first!");
-        if (map.getZoom() < 14) return alert("Please zoom in closer (neighborhood level) to load data.");
-
+        
         const radiusMeters = parseInt(document.getElementById('radius').value);
         const center = [clickedPoint.lng, clickedPoint.lat];
 
-        // 1. Get features already loaded in the browser's current view
-        const features = map.queryRenderedFeatures({ layers: ['maatvoering-layer'] });
+        // This queries EVERYTHING the map has currently downloaded
+        const features = map.querySourceFeatures('plu_vt', {
+            sourceLayer: 'maatvoering'
+        });
 
         if (features.length === 0) {
-            document.getElementById('status').innerText = "No data visible. Try zooming in more.";
+            document.getElementById('status').innerText = "Zero features found in browser memory. Are the green lines visible?";
+            document.getElementById('status').style.color = "#d9534f";
             return;
         }
 
-        // 2. Filter features by radius using Turf.js
+        // Filter by radius
         const filtered = features.filter(f => {
             try {
                 const distance = turf.distance(center, turf.center(f), {units: 'meters'});
@@ -94,23 +98,25 @@
         });
 
         if (filtered.length > 0) {
-            // Clean up the features (MapLibre adds extra properties we don't need)
-            const cleanFeatures = filtered.map(f => ({
+            // Remove duplicates (Vector tiles often repeat features across tile boundaries)
+            const uniqueFeatures = Array.from(new Set(filtered.map(f => JSON.stringify(f.geometry + JSON.stringify(f.properties)))))
+                .map(str => filtered.find(f => JSON.stringify(f.geometry + JSON.stringify(f.properties)) === str));
+
+            const collection = turf.featureCollection(uniqueFeatures.map(f => ({
                 type: "Feature",
                 geometry: f.geometry,
                 properties: f.properties
-            }));
+            })));
 
-            const collection = turf.featureCollection(cleanFeatures);
             const blob = new Blob([JSON.stringify(collection)], {type: 'application/json'});
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `national_extract.geojson`;
+            a.download = `maatvoering_export.geojson`;
             a.click();
-            document.getElementById('status').innerText = `Success! Exported ${cleanFeatures.length} objects.`;
+            document.getElementById('status').innerText = `Success! Exported ${uniqueFeatures.length} items.`;
         } else {
-            document.getElementById('status').innerText = "No objects within the radius circle.";
+            document.getElementById('status').innerText = "No features inside that circle.";
         }
     }
 </script>
