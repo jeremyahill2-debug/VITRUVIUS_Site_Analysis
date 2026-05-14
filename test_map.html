@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>NL Ruimtelijke Plannen Downloader - Maatvoering v7</title>
+    <title>NL Ruimtelijke Plannen Downloader - Maatvoering v8</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         body { margin: 0; font-family: sans-serif; background: #1a1a1a; }
@@ -37,7 +37,7 @@
         attribution: '©OpenStreetMap'
     }).addTo(map);
 
-    // 2. The Mask (Greying out outside NL)
+    // 2. The Netherlands Mask
     const maskStyle = { color: 'none', fillColor: '#333', fillOpacity: 0.6, interactive: false };
     const nl = { n: 53.7, s: 50.7, w: 3.2, e: 7.3 };
     L.rectangle([[90, -180], [nl.n, 180]], maskStyle).addTo(map); 
@@ -89,11 +89,10 @@
         if (!selectedPoint) return alert("Click map first.");
         
         const r = radiusInput.value;
-        statusDiv.innerText = "Requesting data via OGC API...";
+        statusDiv.innerText = "Requesting data...";
 
-        // OGC API Features use a Bounding Box (bbox) rather than DWITHIN for simple web requests
-        // We calculate a square bbox based on the radius
-        const offset = r / 111320; // Rough conversion from meters to degrees
+        // Bbox calculation
+        const offset = r / 111320; 
         const bbox = [
             selectedPoint.lng - offset,
             selectedPoint.lat - offset,
@@ -101,11 +100,12 @@
             selectedPoint.lat + offset
         ].join(',');
 
-        // Updated Endpoint to OGC API (Modern, JSON-first)
-        const apiUrl = `https://api.pdok.nl/kadaster/plu/ogc/v1_0/collections/Maatvoering/items?bbox=${bbox}&f=json`;
+        // 4. Using a CORS proxy to bypass browser restrictions
+        const proxy = "https://corsproxy.io/?";
+        const targetUrl = `https://api.pdok.nl/kadaster/plu/ogc/v1_0/collections/maatvoering/items?bbox=${bbox}&f=json`;
 
         try {
-            const res = await fetch(apiUrl);
+            const res = await fetch(proxy + encodeURIComponent(targetUrl));
             if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
             
             const data = await res.json();
@@ -118,10 +118,10 @@
                 link.click();
                 statusDiv.innerText = `Success! Found ${data.features.length} features.`;
             } else {
-                statusDiv.innerText = "No features found in this bbox.";
+                statusDiv.innerText = "No features found in this area.";
             }
         } catch (e) {
-            statusDiv.innerText = "Error: Connection blocked or API down.";
+            statusDiv.innerText = "CORS block. Try using a local server (VS Code Live Server).";
             console.error(e);
         }
     }
