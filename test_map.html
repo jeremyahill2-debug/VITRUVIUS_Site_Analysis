@@ -1,128 +1,129 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>NL Ruimtelijke Plannen Downloader</title>
+    <title>NL Ruimtelijke Plannen - Maatvoering downloader v3</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         body { margin: 0; font-family: sans-serif; background: #1a1a1a; }
         #map { height: 100vh; width: 100%; background: #000; cursor: crosshair; }
         #ui {
             position: absolute; top: 15px; right: 15px; z-index: 1000;
-            background: white; padding: 20px; border-radius: 12px; width: 240px;
+            background: white; padding: 20px; border-radius: 12px; width: 220px;
             box-shadow: 0 4px 20px rgba(0,0,0,0.4);
         }
         input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
         button { width: 100%; cursor: pointer; padding: 12px; background: #007bff; color: white; border: none; border-radius: 6px; font-weight: bold; }
-        button:disabled { background: #ccc; }
         #status { font-size: 12px; margin-top: 10px; color: #555; line-height: 1.4; }
     </style>
 </head>
 <body>
 
 <div id="ui">
-    <strong style="color: #333;">Maatvoering Radius (m)</strong>
+    <strong style="color: #333;">Search Radius (meters)</strong>
     <input type="number" id="radius" value="500">
-    <button id="dlBtn" onclick="downloadData()">Download Maatvoering</button>
-    <div id="status">Zoom in and click to select an area.</div>
+    <button onclick="downloadData()">Download Maatvoering</button>
+    <div id="status">Click the map to select an area. Showing BAG/BRT layers for clarity.</div>
 </div>
 
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- Adding Proj4Leaflet to handle Dutch Coordinates correctly for the WFS query -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.js"></script>
+
 <script>
-    // 1. Initialize Map (Back to original light style)
+    // 1. Initialize Map
     const map = L.map('map').setView([52.2, 5.3], 7);
 
+    // 2. Base Layer (Your original Light style)
     L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
         attribution: '©OpenStreetMap'
     }).addTo(map);
 
-    // 2. Visual Reference Layer
-    const rpLayer = L.tileLayer.wms('https://service.pdok.nl/kadaster/plu/wms/v1_0', {
+    // 3. Restore BAG Layers (The "thin lines" you liked)
+    L.tileLayer.wms('https://service.pdok.nl/lv/bag/wms/v2_0', {
+        layers: 'pand',
+        format: 'image/png',
+        transparent: true,
+        version: '1.3.0',
+        minZoom: 16,
+        attribution: '© PDOK BAG'
+    }).addTo(map);
+
+    // 4. Maatvoering Visual Layer (The dashed planning lines)
+    const maatLayer = L.tileLayer.wms('https://service.pdok.nl/kadaster/plu/wms/v1_0', {
         layers: 'Maatvoering',
         format: 'image/png',
         transparent: true,
         version: '1.3.0',
-        minZoom: 14,
-        attribution: '© PDOK'
+        minZoom: 15
     }).addTo(map);
 
     let selectedPoint = null;
     let circlePreview = null;
 
-    const radiusInput = document.getElementById('radius');
-    const statusDiv = document.getElementById('status');
+    // RD New Projection definition for Dutch Data
+    const RD = "+proj=sterea +lat_0=52.15616055555555 +lon_0=5.38763888888889 +k=0.9999079 +x_0=155000 +y_0=463000 +ellps=bessel +units=m +no_defs";
 
     function updateCircle() {
         if (!selectedPoint) return;
-        const r = parseInt(radiusInput.value) || 0;
+        const r = parseInt(document.getElementById('radius').value) || 0;
         if (circlePreview) {
             circlePreview.setLatLng(selectedPoint).setRadius(r);
         } else {
-            circlePreview = L.circle(selectedPoint, { radius: r, color: '#007bff', fillOpacity: 0.3 }).addTo(map);
+            circlePreview = L.circle(selectedPoint, { radius: r, color: '#007bff', fillOpacity: 0.2 }).addTo(map);
         }
     }
 
-    radiusInput.addEventListener('input', updateCircle);
-    
     map.on('click', function(e) {
         selectedPoint = e.latlng;
         updateCircle();
-        statusDiv.innerHTML = `<b>Target:</b> ${selectedPoint.lat.toFixed(4)}, ${selectedPoint.lng.toFixed(4)}`;
+        document.getElementById('status').innerHTML = `<b>Target set.</b> Ready to download.`;
     });
 
     async function downloadData() {
-        if (!selectedPoint) return alert("Please click on the map first.");
+        if (!selectedPoint) return alert("Click map first.");
         
-        const r = radiusInput.value;
-        const btn = document.getElementById('dlBtn');
-        btn.disabled = true;
-        statusDiv.innerText = "Querying PDOK WFS...";
+        const r = document.getElementById('radius').value;
+        const status = document.getElementById('status');
+        status.innerText = "Fetching Maatvoering data...";
 
-        // The specific WFS params for Ruimtelijke Plannen
+        // Convert Lat/Lon to Dutch RD Coordinates (Standard for PDOK PLU WFS)
+        const rdCoords = proj4("WGS84", RD, [selectedPoint.lng, selectedPoint.lat]);
+        
         const baseUrl = "https://service.pdok.nl/kadaster/plu/wfs/v1_0";
         
-        // Corrected CQL Filter: 
-        // 1. Geometry column is usually 'geometrie'
-        // 2. We explicitly use EPSG:4326 for the point
-        const cqlFilter = `DWITHIN(geometrie,POINT(${selectedPoint.lng} ${selectedPoint.lat}),${r},meters)`;
-
+        // WFS Query using DWITHIN in RD coordinates
         const params = new URLSearchParams({
             service: 'WFS',
             version: '2.0.0',
             request: 'GetFeature',
-            typeNames: 'Maatvoering', // Removed 'plu:' prefix as it can cause 400 errors depending on the endpoint config
+            typeNames: 'plu:Maatvoering',
             outputFormat: 'application/json',
-            srsName: 'EPSG:4326',
-            CQL_FILTER: cqlFilter
+            srsName: 'EPSG:28992', // Querying in Dutch projection is more stable
+            CQL_FILTER: `DWITHIN(geometrie,POINT(${rdCoords[0]} ${rdCoords[1]}),${r},meters)`
         });
 
         try {
-            const response = await fetch(`${baseUrl}?${params.toString()}`);
+            const res = await fetch(`${baseUrl}?${params.toString()}`);
+            if (!res.ok) throw new Error("Service error");
             
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`Server error: ${response.status}`);
-            }
-            
-            const data = await response.json();
+            const data = await res.json();
             
             if (data.features && data.features.length > 0) {
                 const blob = new Blob([JSON.stringify(data)], {type: 'application/json'});
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `maatvoering_${Date.now()}.geojson`;
+                a.download = `maatvoering_data.geojson`;
                 a.click();
-                statusDiv.innerText = `Success! Found ${data.features.length} features.`;
+                status.innerText = `Success! Found ${data.features.length} features.`;
             } else {
-                statusDiv.innerText = "No features found in this circle. Try a larger radius or a different spot.";
+                status.innerText = "No Maatvoering found in this exact radius.";
             }
-        } catch (error) {
-            console.error(error);
-            statusDiv.innerText = "Error fetching data. Check console for details.";
-        } finally {
-            btn.disabled = false;
+        } catch (e) {
+            status.innerText = "Download error. The service might be restricted or busy.";
+            console.error(e);
         }
     }
 </script>
