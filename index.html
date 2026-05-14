@@ -14,15 +14,17 @@
         input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
         button { width: 100%; cursor: pointer; padding: 12px; background: #007bff; color: white; border: none; border-radius: 6px; font-weight: bold; }
         #status { font-size: 12px; margin-top: 10px; color: #555; line-height: 1.4; }
+        #zoom-info { font-size: 10px; color: #999; margin-top: 5px; }
     </style>
 </head>
 <body>
 
 <div id="ui">
-    <strong style="color: #333;">Search Radius (meters)</strong>
-    <input type="number" id="radius" value="1000">
+    <strong style="color: #333;">Search Radius (m)</strong>
+    <input type="number" id="radius" value="500">
     <button onclick="downloadData()">Download GIS Data</button>
-    <div id="status">Zoom in to street level for house numbers.</div>
+    <div id="status">Zoom in to Level 17+ for house numbers.</div>
+    <div id="zoom-info">Current Zoom: <span id="z-val">7</span></div>
 </div>
 
 <div id="map"></div>
@@ -30,34 +32,35 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
     // 1. Initialize Map
-    const map = L.map('map').setView([52.2, 5.3], 7);
-
-    // 2. Base Layer: Carto Light (for zoomed out view)
-    const cartoLight = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-        attribution: '©OpenStreetMap',
+    const map = L.map('map', {
         maxZoom: 20
-    }).addTo(map);
+    }).setView([52.13, 5.29], 7);
 
-    // 3. PDOK BRT Achtergrondkaart (This contains the house numbers)
-    // We set this to only show at zoom 16+ so it doesn't clash with the mask
-    const brtLayer = L.tileLayer('https://service.pdok.nl/brt/achtergrondkaart/wmts/v2_0/standaard/EPSG:3857/{z}/{x}/{y}.png', {
-        minZoom: 16,
+    // 2. The Official Dutch Background Map (Contains all labels/numbers)
+    // We use the BRT Achtergrondkaart via the PDOK WMTS service.
+    const brtGrid = L.tileLayer('https://service.pdok.nl/brt/achtergrondkaart/wmts/v2_0/standaard/EPSG:3857/{z}/{x}/{y}.png', {
+        minZoom: 0,
         maxZoom: 20,
         attribution: '© PDOK'
     }).addTo(map);
 
+    // Update zoom display
+    map.on('zoomend', () => {
+        document.getElementById('z-val').innerText = map.getZoom();
+    });
+
     let selectedPoint = null;
     let circlePreview = null;
 
-    // 4. Mask Logic (Grey out non-NL areas)
-    const maskStyle = { color: 'none', fillColor: '#333', fillOpacity: 0.6, interactive: false };
+    // 3. Mask Logic (Grey out non-NL areas)
+    const maskStyle = { color: 'none', fillColor: '#1a1a1a', fillOpacity: 0.7, interactive: false };
     const nl = { n: 53.7, s: 50.7, w: 3.2, e: 7.3 };
     L.rectangle([[90, -180], [nl.n, 180]], maskStyle).addTo(map); 
     L.rectangle([[nl.s, -180], [-90, 180]], maskStyle).addTo(map); 
     L.rectangle([[nl.n, -180], [nl.s, nl.w]], maskStyle).addTo(map); 
     L.rectangle([[nl.n, nl.e], [nl.s, 180]], maskStyle).addTo(map); 
 
-    // 5. Interaction
+    // 4. Interaction
     const radiusInput = document.getElementById('radius');
     function updateCircle() {
         if (!selectedPoint) return;
@@ -73,9 +76,10 @@
     map.on('click', function(e) {
         selectedPoint = e.latlng;
         updateCircle();
-        document.getElementById('status').innerHTML = `<b>Target:</b> ${selectedPoint.lat.toFixed(4)}, ${selectedPoint.lng.toFixed(4)}`;
+        document.getElementById('status').innerHTML = `<b>Selected Point</b>`;
     });
 
+    // 5. Download Logic
     async function downloadData() {
         if (!selectedPoint) return alert("Click map first.");
         const r = radiusInput.value;
@@ -83,14 +87,13 @@
 
         try {
             const res = await fetch(url);
-            const json = await res.json();
-            const blob = new Blob([JSON.stringify(json)], {type: 'application/json'});
+            const data = await res.json();
+            const blob = new Blob([JSON.stringify(data)], {type: 'application/json'});
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
-            a.download = `nl_buildings.geojson`;
+            a.download = `delft_data.geojson`;
             a.click();
-            document.getElementById('status').innerText = `Success! Got ${json.features.length} objects.`;
-        } catch (e) { document.getElementById('status').innerText = "Download error."; }
+        } catch (e) { alert("Download failed."); }
     }
 </script>
 </body>
