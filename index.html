@@ -22,7 +22,7 @@
     <strong style="color: #333;">Search Radius (meters)</strong>
     <input type="number" id="radius" value="1000">
     <button onclick="downloadData()">Download GIS Data</button>
-    <div id="status">Zoom in deep to see house numbers.</div>
+    <div id="status">Zoom in to street level for house numbers.</div>
 </div>
 
 <div id="map"></div>
@@ -32,34 +32,24 @@
     // 1. Initialize Map
     const map = L.map('map').setView([52.2, 5.3], 7);
 
-    // 2. Base Layer (Standard Light)
-    const baseLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-        attribution: '©OpenStreetMap'
+    // 2. Base Layer: Carto Light (for zoomed out view)
+    const cartoLight = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        attribution: '©OpenStreetMap',
+        maxZoom: 20
     }).addTo(map);
 
-    // 3. BAG House Numbers Layer (Updated Endpoint)
-    // We use the 'standaard' layer from the BAG WMS which includes numbers/outlines
-    const bagLayer = L.tileLayer.wms('https://service.pdok.nl/lv/bag/wms/v2_0', {
-        layers: 'pand', // 'pand' often contains the house number labels in this WMS
-        format: 'image/png',
-        transparent: true,
-        version: '1.3.0',
-        minZoom: 17, // Increased zoom requirement for server stability
-        attribution: '© PDOK BAG'
-    }).addTo(map);
-
-    // 4. Added: BRT Text Labels (Backup for house numbers/street names)
-    L.tileLayer.wms('https://service.pdok.nl/brt/achtergrondkaart/wms/v2_0', {
-        layers: 'teksten',
-        format: 'image/png',
-        transparent: true,
-        minZoom: 17
+    // 3. PDOK BRT Achtergrondkaart (This contains the house numbers)
+    // We set this to only show at zoom 16+ so it doesn't clash with the mask
+    const brtLayer = L.tileLayer('https://service.pdok.nl/brt/achtergrondkaart/wmts/v2_0/standaard/EPSG:3857/{z}/{x}/{y}.png', {
+        minZoom: 16,
+        maxZoom: 20,
+        attribution: '© PDOK'
     }).addTo(map);
 
     let selectedPoint = null;
     let circlePreview = null;
 
-    // 5. Mask Logic
+    // 4. Mask Logic (Grey out non-NL areas)
     const maskStyle = { color: 'none', fillColor: '#333', fillOpacity: 0.6, interactive: false };
     const nl = { n: 53.7, s: 50.7, w: 3.2, e: 7.3 };
     L.rectangle([[90, -180], [nl.n, 180]], maskStyle).addTo(map); 
@@ -67,7 +57,7 @@
     L.rectangle([[nl.n, -180], [nl.s, nl.w]], maskStyle).addTo(map); 
     L.rectangle([[nl.n, nl.e], [nl.s, 180]], maskStyle).addTo(map); 
 
-    // 6. Interaction
+    // 5. Interaction
     const radiusInput = document.getElementById('radius');
     function updateCircle() {
         if (!selectedPoint) return;
@@ -93,13 +83,13 @@
 
         try {
             const res = await fetch(url);
-            const data = await res.json();
-            const blob = new Blob([JSON.stringify(data)], {type: 'application/json'});
+            const json = await res.json();
+            const blob = new Blob([JSON.stringify(json)], {type: 'application/json'});
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
-            a.download = `nl_data.geojson`;
+            a.download = `nl_buildings.geojson`;
             a.click();
-            document.getElementById('status').innerText = `Success! Got ${data.features.length} objects.`;
+            document.getElementById('status').innerText = `Success! Got ${json.features.length} objects.`;
         } catch (e) { document.getElementById('status').innerText = "Download error."; }
     }
 </script>
