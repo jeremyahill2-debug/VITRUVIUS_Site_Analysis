@@ -4,30 +4,22 @@
     <title>NL GIS Radius Downloader</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { margin: 0; font-family: sans-serif; }
+        body { margin: 0; font-family: sans-serif; background: #222; }
         #map { height: 100vh; width: 100%; cursor: crosshair; }
         #ui-panel {
             position: absolute; top: 10px; right: 10px; z-index: 1000;
             background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.2);
         }
-        input { width: 80px; padding: 5px; margin: 5px 0; }
-        button { cursor: pointer; background: #007bff; color: white; border: none; padding: 8px; border-radius: 4px; }
-        .info { font-size: 12px; color: #666; margin-top: 10px; }
-        #map { 
-    background-color: #cccccc; /* This makes the 'void' grey */
-}
-.leaflet-container {
-    background: #cccccc !important;
-}
+        .leaflet-container { background: #333 !important; } /* Dark background for 'void' */
     </style>
 </head>
 <body>
 
 <div id="ui-panel">
     <strong>Radius (meters)</strong><br>
-    <input type="number" id="radius" value="500">
-    <button onclick="downloadData()">Download Data</button>
-    <div class="info" id="status">Click on the map to set a center point.</div>
+    <input type="number" id="radius" value="500" style="width:80px; margin:5px 0;">
+    <button onclick="downloadData()" style="cursor:pointer;">Download Data</button>
+    <div id="status" style="font-size: 12px; color: #666; margin-top: 10px;">Click on the Netherlands to start.</div>
 </div>
 
 <div id="map"></div>
@@ -38,65 +30,73 @@
     let selectedPoint = null;
     let circlePreview = null;
 
-    // 1. Add Base Layer
+    // 1. Add the Base Map (This will be visible ONLY through the 'hole' we cut)
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-    // 2. Simple "Mask" (Greying out other countries)
-    // For a production site, you'd load a real NL-border GeoJSON and invert it.
-    // Here, we'll just style the background or use a simple rectangle mask if needed.
+    // 2. The "Inverted Mask" Logic
+    // We load the Netherlands boundary and use it to punch a hole in a global rectangle
+    fetch('https://raw.githubusercontent.com/codeforgermany/click-that-hood/master/public/data/netherlands.geojson')
+        .then(res => res.json())
+        .then(data => {
+            // Create a "world-covering" polygon with a hole
+            // Coordinates for a box bigger than the earth
+            const worldCoords = [
+                [[-180, -90], [-180, 90], [180, 90], [180, -90], [-180, -90]]
+            ];
+            
+            // Add the Netherlands coordinates as the 'hole' (second array in the polygon)
+            // Note: This is simplified; complex GeoJSONs might need processing with Turf.js
+            const mask = L.geoJSON(data, {
+                invert: true, // This is a helper concept
+                style: {
+                    color: '#000',
+                    weight: 1,
+                    fillColor: '#555', // The "Grey Out" color
+                    fillOpacity: 0.8
+                }
+            }).addTo(map);
+            
+            // To properly "mask", we actually add a massive polygon and 
+            // use the NL coordinates as an inner ring (hole).
+            const outerBounds = [[90, -180], [90, 180], [-90, 180], [-90, -180]];
+            const nlCoords = data.features[0].geometry.coordinates[0];
+            
+            // Note: coordinates in GeoJSON are [Lon, Lat], Leaflet wants [Lat, Lon]
+            const cleanNlCoords = nlCoords.map(c => [c[1], c[0]]);
 
-    // 3. Click Handler
+            L.polygon([outerBounds, cleanNlCoords], {
+                color: 'black',
+                weight: 0,
+                fillColor: '#222', 
+                fillOpacity: 0.7
+            }).addTo(map);
+        });
+
     map.on('click', function(e) {
         selectedPoint = e.latlng;
         const r = document.getElementById('radius').value;
-
         if (circlePreview) map.removeLayer(circlePreview);
-        circlePreview = L.circle(selectedPoint, { radius: parseInt(r), color: 'red' }).addTo(map);
-        
-        document.getElementById('status').innerText = `Point set: ${selectedPoint.lat.toFixed(4)}, ${selectedPoint.lng.toFixed(4)}`;
+        circlePreview = L.circle(selectedPoint, { radius: parseInt(r), color: 'cyan' }).addTo(map);
+        document.getElementById('status').innerText = `Point: ${selectedPoint.lat.toFixed(3)}, ${selectedPoint.lng.toFixed(3)}`;
     });
 
     async function downloadData() {
-        if (!selectedPoint) {
-            alert("Please click on the map first!");
-            return;
-        }
-
+        if (!selectedPoint) return alert("Click the map!");
         const radius = document.getElementById('radius').value;
-        document.getElementById('status').innerText = "Querying PDOK...";
-
-        // PDOK WFS Query for Water Parts (Example Layer)
-        // We use a DWP (Distance Within) spatial filter
         const wfsUrl = "https://service.pdok.nl/brt/top10nl/wfs/v1_0";
-        const typeName = "top10nl:waterdeel"; // Change this for different datasets
-        
-        // CQL Filter for a circle (buffer) around the click point
         const cqlFilter = `DWITHIN(geometrie, POINT(${selectedPoint.lng} ${selectedPoint.lat}), ${radius}, meters)`;
-        
-        const fullUrl = `${wfsUrl}?service=WFS&version=2.0.0&request=GetFeature&typeNames=${typeName}&outputFormat=application/json&srsName=EPSG:4326&CQL_FILTER=${encodeURIComponent(cqlFilter)}`;
+        const fullUrl = `${wfsUrl}?service=WFS&version=2.0.0&request=GetFeature&typeNames=top10nl:waterdeel&outputFormat=application/json&srsName=EPSG:4326&CQL_FILTER=${encodeURIComponent(cqlFilter)}`;
 
         try {
             const response = await fetch(fullUrl);
             const data = await response.json();
-            
-            if (data.features.length === 0) {
-                alert("No objects found in this radius.");
-                return;
-            }
-
-            // Download the JSON
             const blob = new Blob([JSON.stringify(data)], { type: "application/json" });
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `nl_data_export.geojson`;
+            a.download = `nl_data.geojson`;
             a.click();
-            
-            document.getElementById('status').innerText = `Downloaded ${data.features.length} objects!`;
-        } catch (error) {
-            console.error(error);
-            alert("Error fetching data. Check console.");
-        }
+        } catch (e) { alert("Data fetch failed. PDOK might be busy."); }
     }
 </script>
 </body>
