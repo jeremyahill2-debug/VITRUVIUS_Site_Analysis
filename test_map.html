@@ -1,115 +1,115 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>NL GIS Downloader - Final Corrected</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <title>NL GIS - Local Data Processor</title>
+    <link rel="stylesheet" href="[https://unpkg.com/leaflet@1.9.4/dist/leaflet.css](https://unpkg.com/leaflet@1.9.4/dist/leaflet.css)" />
     <style>
         body { margin: 0; font-family: sans-serif; background: #1a1a1a; }
         #map { height: 100vh; width: 100%; background: #000; cursor: crosshair; }
         #ui {
             position: absolute; top: 15px; right: 15px; z-index: 1000;
-            background: white; padding: 20px; border-radius: 12px; width: 220px;
+            background: white; padding: 20px; border-radius: 12px; width: 250px;
             box-shadow: 0 4px 20px rgba(0,0,0,0.4);
         }
-        input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
+        input, .file-label { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; display: block; }
         button { width: 100%; cursor: pointer; padding: 12px; background: #007bff; color: white; border: none; border-radius: 6px; font-weight: bold; }
         #status { font-size: 12px; margin-top: 10px; color: #555; line-height: 1.4; }
+        .hidden { display: none; }
     </style>
 </head>
 <body>
 
 <div id="ui">
-    <strong style="color: #333;">Radius (meters)</strong>
+    <strong style="color: #333;">1. Load Dataset (.geojson)</strong>
+    <input type="file" id="fileInput" accept=".geojson">
+    
+    <strong style="color: #333;">2. Search Radius (m)</strong>
     <input type="number" id="radius" value="500">
-    <button onclick="downloadData()">Download Maatvoering</button>
-    <div id="status">Click map inside the Netherlands.</div>
+    
+    <button onclick="processLocalData()">Extract & Download Area</button>
+    <div id="status">Upload a file, then click the map.</div>
 </div>
 
 <div id="map"></div>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="[https://unpkg.com/leaflet@1.9.4/dist/leaflet.js](https://unpkg.com/leaflet@1.9.4/dist/leaflet.js)"></script>
+<!-- Turf.js for spatial calculations -->
+<script src="[https://unpkg.com/@turf/turf@6/turf.min.js](https://unpkg.com/@turf/turf@6/turf.min.js)"></script>
+
 <script>
     const map = L.map('map').setView([52.2, 5.3], 7);
-
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-        attribution: '©OpenStreetMap'
-    }).addTo(map);
-
-    // Netherlands Mask Logic
-    const maskStyle = { color: 'none', fillColor: '#333', fillOpacity: 0.6, interactive: false };
-    const nl = { n: 53.7, s: 50.7, w: 3.2, e: 7.3 };
-    L.rectangle([[90, -180], [nl.n, 180]], maskStyle).addTo(map); 
-    L.rectangle([[nl.s, -180], [-90, 180]], maskStyle).addTo(map); 
-    L.rectangle([[nl.n, -180], [nl.s, nl.w]], maskStyle).addTo(map); 
-    L.rectangle([[nl.n, nl.e], [nl.s, 180]], maskStyle).addTo(map); 
-
-    // WMS layers for visuals
-    L.tileLayer.wms('https://service.pdok.nl/lv/bag/wms/v2_0', { layers: 'pand', transparent: true, format: 'image/png', minZoom: 16 }).addTo(map);
-    L.tileLayer.wms('https://service.pdok.nl/kadaster/plu/wms/v1_0', { layers: 'Maatvoering', transparent: true, format: 'image/png', minZoom: 14 }).addTo(map);
-
+    let fullDataset = null;
     let selectedPoint = null;
     let circlePreview = null;
-    const radiusInput = document.getElementById('radius');
-    const statusDiv = document.getElementById('status');
 
-    function updateCircle() {
-        if (!selectedPoint) return;
-        const r = parseInt(radiusInput.value) || 0;
+    // Base Layer & Mask
+    L.tileLayer('https://{s}[.basemaps.cartocdn.com/light_all/](https://.basemaps.cartocdn.com/light_all/){z}/{x}/{y}{r}.png').addTo(map);
+    const maskStyle = { color: 'none', fillColor: '#333', fillOpacity: 0.6, interactive: false };
+    const nl = { n: 53.7, s: 50.7, w: 3.2, e: 7.3 };
+    L.rectangle([[90, -180], [nl.n, 180]], maskStyle).addTo(map);
+    L.rectangle([[nl.s, -180], [-90, 180]], maskStyle).addTo(map);
+    L.rectangle([[nl.n, -180], [nl.s, nl.w]], maskStyle).addTo(map);
+    L.rectangle([[nl.n, nl.e], [nl.s, 180]], maskStyle).addTo(map);
+
+    // File Loading Logic
+    document.getElementById('fileInput').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(event) {
+            try {
+                fullDataset = JSON.parse(event.target.result);
+                document.getElementById('status').innerText = `File loaded: ${fullDataset.features.length} features. Now click map.`;
+            } catch (err) {
+                alert("Error reading GeoJSON file.");
+            }
+        };
+        reader.readAsText(file);
+    });
+
+    // Map Interaction
+    map.on('click', function(e) {
+        selectedPoint = e.latlng;
+        const r = parseInt(document.getElementById('radius').value);
         if (circlePreview) {
             circlePreview.setLatLng(selectedPoint).setRadius(r);
         } else {
-            circlePreview = L.circle(selectedPoint, { radius: r, color: '#007bff', fillOpacity: 0.2, weight: 2 }).addTo(map);
+            circlePreview = L.circle(selectedPoint, { radius: r, color: '#007bff' }).addTo(map);
         }
-    }
+        document.getElementById('status').innerText = "Area selected. Ready to extract.";
+    });
 
-    radiusInput.addEventListener('input', updateCircle);
-    map.on('click', (e) => { selectedPoint = e.latlng; updateCircle(); statusDiv.innerHTML = "Target set."; });
+    function processLocalData() {
+        if (!fullDataset || !selectedPoint) {
+            return alert("Please upload a file AND click the map first.");
+        }
 
-async function downloadData() {
-    if (!selectedPoint) return alert("Please click the map first.");
-    
-    const r = document.getElementById('radius').value;
-    const statusDiv = document.getElementById('status');
-    statusDiv.innerText = "Querying 2026 OGC API...";
-
-    // 1. Define the Bounding Box (BBOX)
-    // OGC API uses: minLon, minLat, maxLon, maxLat
-    const offset = r / 111320; 
-    const bbox = [
-        selectedPoint.lng - offset,
-        selectedPoint.lat - offset,
-        selectedPoint.lng + offset,
-        selectedPoint.lat + offset
-    ].join(',');
-
-    // 2. The 2026 API URL
-    const url = `https://api.pdok.nl/kadaster/plu/ogc/v1_0/collections/maatvoering/items?bbox=${bbox}&f=json&limit=500`;
-
-    // 3. Use the CORS proxy
-    const proxiedUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
-
-    try {
-        const response = await fetch(proxiedUrl);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const r = parseInt(document.getElementById('radius').value);
+        const center = [selectedPoint.lng, selectedPoint.lat];
         
-        const data = await response.json();
+        document.getElementById('status').innerText = "Processing geometry...";
 
-        if (data.features && data.features.length > 0) {
-            const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
-            const link = document.createElement('a');
-            link.href = URL.createObjectURL(blob);
-            link.download = `maatvoering_${Date.now()}.geojson`;
-            link.click();
-            statusDiv.innerText = `Success! Downloaded ${data.features.length} objects.`;
+        // Spatial Filtering with Turf.js
+        const filteredFeatures = fullDataset.features.filter(feature => {
+            // Calculate distance between click and feature center
+            const centerOfFeature = turf.center(feature);
+            const distance = turf.distance(center, centerOfFeature, {units: 'meters'});
+            return distance <= r;
+        });
+
+        if (filteredFeatures.length > 0) {
+            const result = turf.featureCollection(filteredFeatures);
+            const blob = new Blob([JSON.stringify(result)], {type: 'application/json'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `extracted_area.geojson`;
+            a.click();
+            document.getElementById('status').innerText = `Success! Extracted ${filteredFeatures.length} features.`;
         } else {
-            statusDiv.innerText = "No maatvoering found in this area.";
+            document.getElementById('status').innerText = "No features found in the selected circle.";
         }
-    } catch (error) {
-        console.error("PDOK API Error:", error);
-        statusDiv.innerText = "Connection failed. Check console.";
     }
-}
-    
 </script>
 </body>
 </html>
