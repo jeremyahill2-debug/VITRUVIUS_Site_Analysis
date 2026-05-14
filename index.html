@@ -29,29 +29,58 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-    // 1. Setup Map with a darker, cleaner base
-    const map = L.map('map').setView([52.2, 5.3], 7);
+
+
+    // 1. Updated Mask Logic (Ensure 'interactive: false' is on all rectangles)
+    const maskStyle = { 
+        color: 'none', 
+        fillColor: '#333', 
+        fillOpacity: 0.6, 
+        interactive: false // THIS IS KEY: allows clicking through the mask
+    };
     
-    // Using CartoDB Positron (very light) or Voyager
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-        attribution: '©OpenStreetMap, ©CartoDB'
-    }).addTo(map);
+    const nl = { n: 53.7, s: 50.7, w: 3.2, e: 7.3 };
 
-    let selectedPoint = null;
-    let circlePreview = null;
+    L.rectangle([[90, -180], [nl.n, 180]], maskStyle).addTo(map); 
+    L.rectangle([[nl.s, -180], [-90, 180]], maskStyle).addTo(map); 
+    L.rectangle([[nl.n, -180], [nl.s, nl.w]], maskStyle).addTo(map); 
+    L.rectangle([[nl.n, nl.e], [nl.s, 180]], maskStyle).addTo(map); 
 
-    // 2. Create the "Grey Out" using 4 massive rectangles around the NL
-    // This avoids the 'black screen' polygon error
-    const maskStyle = { color: 'none', fillColor: '#333', fillOpacity: 0.6, interactive: false };
-    
-    const nl = { n: 53.7, s: 50.7, w: 3.2, e: 7.3 }; // Rough box around NL
+    // 2. Improved Interaction Logic
+    const radiusInput = document.getElementById('radius');
 
-    L.rectangle([[90, -180], [nl.n, 180]], maskStyle).addTo(map); // North
-    L.rectangle([[nl.s, -180], [-90, 180]], maskStyle).addTo(map); // South
-    L.rectangle([[nl.n, -180], [nl.s, nl.w]], maskStyle).addTo(map); // West
-    L.rectangle([[nl.n, nl.e], [nl.s, 180]], maskStyle).addTo(map); // East
+    function updateCircle() {
+        if (!selectedPoint) return;
+        
+        const r = parseInt(radiusInput.value) || 0;
+        
+        if (circlePreview) {
+            // Update both position and radius so it "moves" to the new click
+            circlePreview.setLatLng(selectedPoint);
+            circlePreview.setRadius(r);
+        } else {
+            circlePreview = L.circle(selectedPoint, { 
+                radius: r, 
+                color: '#ff4757', 
+                fillColor: '#ff4757', 
+                fillOpacity: 0.4 
+            }).addTo(map);
+        }
+    }
 
-// 3. Interaction Logic
+    // Update size when typing
+    radiusInput.addEventListener('input', updateCircle);
+
+    // Update position and size when clicking (allows unlimited relocation)
+    map.on('click', function(e) {
+        selectedPoint = e.latlng;
+        updateCircle(); 
+        
+        document.getElementById('status').innerHTML = `<b>New Target Set:</b><br>${selectedPoint.lat.toFixed(4)}, ${selectedPoint.lng.toFixed(4)}`;
+    });
+
+
+    // 3. Interaction Logic
     const radiusInput = document.getElementById('radius');
 
     // Function to update the circle's size
