@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>NL Ruimtelijke Plannen - Maatvoering downloader v3</title>
+    <title>NL Ruimtelijke Plannen - Maatvoering Downloader - v4</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         body { margin: 0; font-family: sans-serif; background: #1a1a1a; }
@@ -22,25 +22,23 @@
     <strong style="color: #333;">Search Radius (meters)</strong>
     <input type="number" id="radius" value="500">
     <button onclick="downloadData()">Download Maatvoering</button>
-    <div id="status">Click the map to select an area. </div>
+    <div id="status">Zoom in and click the map.</div>
 </div>
 
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<!-- Adding Proj4Leaflet to handle Dutch Coordinates correctly for the WFS query -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.js"></script>
 
 <script>
-    // 1. Initialize Map
     const map = L.map('map').setView([52.2, 5.3], 7);
 
-    // 2. Base Layer (Your original Light style)
+    // Base Layer
     L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
         attribution: '©OpenStreetMap'
     }).addTo(map);
 
-    // 3. Restore BAG Layers (The "thin lines" you liked)
+    // BAG Layer (Clean property lines)
     L.tileLayer.wms('https://service.pdok.nl/lv/bag/wms/v2_0', {
         layers: 'pand',
         format: 'image/png',
@@ -50,8 +48,8 @@
         attribution: '© PDOK BAG'
     }).addTo(map);
 
-    // 4. Maatvoering Visual Layer (The dashed planning lines)
-    const maatLayer = L.tileLayer.wms('https://service.pdok.nl/kadaster/plu/wms/v1_0', {
+    // Maatvoering Visuals
+    L.tileLayer.wms('https://service.pdok.nl/kadaster/plu/wms/v1_0', {
         layers: 'Maatvoering',
         format: 'image/png',
         transparent: true,
@@ -61,52 +59,54 @@
 
     let selectedPoint = null;
     let circlePreview = null;
+    const radiusInput = document.getElementById('radius');
+    const statusDiv = document.getElementById('status');
 
-    // RD New Projection definition for Dutch Data
+    // RD projection for the WFS query
     const RD = "+proj=sterea +lat_0=52.15616055555555 +lon_0=5.38763888888889 +k=0.9999079 +x_0=155000 +y_0=463000 +ellps=bessel +units=m +no_defs";
 
     function updateCircle() {
         if (!selectedPoint) return;
-        const r = parseInt(document.getElementById('radius').value) || 0;
+        const r = parseInt(radiusInput.value) || 0;
         if (circlePreview) {
             circlePreview.setLatLng(selectedPoint).setRadius(r);
         } else {
-            circlePreview = L.circle(selectedPoint, { radius: r, color: '#007bff', fillOpacity: 0.2 }).addTo(map);
+            circlePreview = L.circle(selectedPoint, { radius: r, color: '#007bff', fillOpacity: 0.2, weight: 2 }).addTo(map);
         }
     }
+
+    // FIX: Re-added the listeners so the circle updates live
+    radiusInput.addEventListener('input', updateCircle);
+    radiusInput.addEventListener('change', updateCircle);
 
     map.on('click', function(e) {
         selectedPoint = e.latlng;
         updateCircle();
-        document.getElementById('status').innerHTML = `<b>Target set.</b> Ready to download.`;
+        statusDiv.innerHTML = `<b>Target set:</b> ${selectedPoint.lat.toFixed(4)}, ${selectedPoint.lng.toFixed(4)}`;
     });
 
     async function downloadData() {
         if (!selectedPoint) return alert("Click map first.");
         
-        const r = document.getElementById('radius').value;
-        const status = document.getElementById('status');
-        status.innerText = "Fetching Maatvoering data...";
+        const r = radiusInput.value;
+        statusDiv.innerText = "Fetching Maatvoering data...";
 
-        // Convert Lat/Lon to Dutch RD Coordinates (Standard for PDOK PLU WFS)
         const rdCoords = proj4("WGS84", RD, [selectedPoint.lng, selectedPoint.lat]);
-        
         const baseUrl = "https://service.pdok.nl/kadaster/plu/wfs/v1_0";
         
-        // WFS Query using DWITHIN in RD coordinates
         const params = new URLSearchParams({
             service: 'WFS',
             version: '2.0.0',
             request: 'GetFeature',
             typeNames: 'plu:Maatvoering',
             outputFormat: 'application/json',
-            srsName: 'EPSG:28992', // Querying in Dutch projection is more stable
+            srsName: 'EPSG:28992',
             CQL_FILTER: `DWITHIN(geometrie,POINT(${rdCoords[0]} ${rdCoords[1]}),${r},meters)`
         });
 
         try {
             const res = await fetch(`${baseUrl}?${params.toString()}`);
-            if (!res.ok) throw new Error("Service error");
+            if (!res.ok) throw new Error("Service unavailable");
             
             const data = await res.json();
             
@@ -115,14 +115,14 @@
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `maatvoering_data.geojson`;
+                a.download = `maatvoering_${Math.round(selectedPoint.lat)}_${Math.round(selectedPoint.lng)}.geojson`;
                 a.click();
-                status.innerText = `Success! Found ${data.features.length} features.`;
+                statusDiv.innerText = `Success! Found ${data.features.length} features.`;
             } else {
-                status.innerText = "No Maatvoering found in this exact radius.";
+                statusDiv.innerText = "No Maatvoering features found here.";
             }
         } catch (e) {
-            status.innerText = "Download error. The service might be restricted or busy.";
+            statusDiv.innerText = "Error fetching data. Try a different area.";
             console.error(e);
         }
     }
