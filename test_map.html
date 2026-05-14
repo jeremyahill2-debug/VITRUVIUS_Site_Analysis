@@ -66,11 +66,14 @@
     map.on('click', (e) => { selectedPoint = e.latlng; updateCircle(); statusDiv.innerHTML = "Target set."; });
 
 async function downloadData() {
-    if (!selectedPoint) return alert("Click map first.");
-    const r = radiusInput.value;
-    statusDiv.innerText = "Requesting 2026 API...";
+    if (!selectedPoint) return alert("Please click the map first.");
+    
+    const r = document.getElementById('radius').value;
+    const statusDiv = document.getElementById('status');
+    statusDiv.innerText = "Querying 2026 OGC API...";
 
-    // 1. Calculate Bounding Box (BBOX) in Lat/Lon for the new OGC API
+    // 1. Define the Bounding Box (BBOX)
+    // OGC API uses: minLon, minLat, maxLon, maxLat
     const offset = r / 111320; 
     const bbox = [
         selectedPoint.lng - offset,
@@ -79,39 +82,31 @@ async function downloadData() {
         selectedPoint.lat + offset
     ].join(',');
 
-    // 2. Updated 2026 Endpoint for Ruimtelijke Plannen
-    // The collection name is 'maatvoering'
-    const baseUrl = "https://api.pdok.nl/kadaster/plu/ogc/v1_0";
-    const url = `${baseUrl}/collections/maatvoering/items?bbox=${bbox}&limit=1000&f=json`;
+    // 2. The 2026 API URL
+    const url = `https://api.pdok.nl/kadaster/plu/ogc/v1_0/collections/maatvoering/items?bbox=${bbox}&f=json&limit=500`;
 
-    // 3. Using the proxy to bypass CORS
+    // 3. Use the CORS proxy
     const proxiedUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
 
     try {
-        const res = await fetch(proxiedUrl);
+        const response = await fetch(proxiedUrl);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         
-        if (res.status === 404) {
-            statusDiv.innerText = "Error 404: Layer 'maatvoering' not found in this API version.";
-            return;
-        }
+        const data = await response.json();
 
-        if (!res.ok) throw new Error(`Server Error: ${res.status}`);
-
-        const data = await res.json();
-        
         if (data.features && data.features.length > 0) {
-            const blob = new Blob([JSON.stringify(data)], {type: 'application/json'});
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = `maatvoering_export.geojson`;
-            a.click();
-            statusDiv.innerText = `Success! Found ${data.features.length} features.`;
+            const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `maatvoering_${Date.now()}.geojson`;
+            link.click();
+            statusDiv.innerText = `Success! Downloaded ${data.features.length} objects.`;
         } else {
-            statusDiv.innerText = "No features found in this specific area.";
+            statusDiv.innerText = "No maatvoering found in this area.";
         }
-    } catch (e) {
-        statusDiv.innerText = "API Error. See console.";
-        console.error("PDOK Fetch Detail:", e);
+    } catch (error) {
+        console.error("PDOK API Error:", error);
+        statusDiv.innerText = "Connection failed. Check console.";
     }
 }
     
