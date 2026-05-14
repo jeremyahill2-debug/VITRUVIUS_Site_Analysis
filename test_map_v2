@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>NL Maatvoering - National Extractor</title>
+    <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+    <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
+    <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+    <style>
+        body { margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        #map { height: 100vh; width: 100%; }
+        #ui {
+            position: absolute; top: 20px; left: 20px; z-index: 1;
+            background: white; padding: 20px; border-radius: 12px; width: 260px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        }
+        h3 { margin: 0 0 10px 0; font-size: 16px; color: #333; }
+        input { width: 100%; padding: 8px; margin: 10px 0; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        button { width: 100%; cursor: pointer; padding: 12px; background: #007bff; color: white; border: none; border-radius: 6px; font-weight: bold; }
+        #status { font-size: 12px; margin-top: 10px; color: #666; line-height: 1.4; }
+    </style>
+</head>
+<body>
+
+<div id="ui">
+    <h3>National Maatvoering</h3>
+    <label>Radius (meters)</label>
+    <input type="number" id="radius" value="100">
+    <button onclick="extractFromTiles()">Extract Visible Data</button>
+    <div id="status">Zoom in to a neighborhood until lines appear, then click a point.</div>
+</div>
+
+<div id="map"></div>
+
+<script>
+    // Initialize the map
+    const map = new maplibregl.Map({
+        container: 'map',
+        style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+        center: [5.3, 52.2],
+        zoom: 7
+    });
+
+    map.on('load', () => {
+        // Add PDOK Vector Tile Source for Ruimtelijke Plannen
+        map.addSource('plu', {
+            type: 'vector',
+            tiles: ['https://service.pdok.nl/kadaster/plu/v1_0/vt/tiles/{z}/{x}/{y}.pbf'],
+            minzoom: 14,
+            maxzoom: 16
+        });
+
+        // Add the Maatvoering Layer visually
+        map.addLayer({
+            'id': 'maatvoering-layer',
+            'type': 'line',
+            'source': 'plu',
+            'source-layer': 'maatvoering',
+            'paint': {
+                'line-color': '#00ff00',
+                'line-width': 2,
+                'line-opacity': 0.8
+            }
+        });
+    });
+
+    let clickedPoint = null;
+
+    map.on('click', (e) => {
+        clickedPoint = e.lngLat;
+        document.getElementById('status').innerText = `Location Set: ${clickedPoint.lat.toFixed(4)}, ${clickedPoint.lng.toFixed(4)}`;
+    });
+
+    function extractFromTiles() {
+        if (!clickedPoint) return alert("Click the map first!");
+        if (map.getZoom() < 14) return alert("Please zoom in closer (neighborhood level) to load data.");
+
+        const radiusMeters = parseInt(document.getElementById('radius').value);
+        const center = [clickedPoint.lng, clickedPoint.lat];
+
+        // 1. Get features already loaded in the browser's current view
+        const features = map.queryRenderedFeatures({ layers: ['maatvoering-layer'] });
+
+        if (features.length === 0) {
+            document.getElementById('status').innerText = "No data visible. Try zooming in more.";
+            return;
+        }
+
+        // 2. Filter features by radius using Turf.js
+        const filtered = features.filter(f => {
+            try {
+                const distance = turf.distance(center, turf.center(f), {units: 'meters'});
+                return distance <= radiusMeters;
+            } catch (err) { return false; }
+        });
+
+        if (filtered.length > 0) {
+            // Clean up the features (MapLibre adds extra properties we don't need)
+            const cleanFeatures = filtered.map(f => ({
+                type: "Feature",
+                geometry: f.geometry,
+                properties: f.properties
+            }));
+
+            const collection = turf.featureCollection(cleanFeatures);
+            const blob = new Blob([JSON.stringify(collection)], {type: 'application/json'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `national_extract.geojson`;
+            a.click();
+            document.getElementById('status').innerText = `Success! Exported ${cleanFeatures.length} objects.`;
+        } else {
+            document.getElementById('status').innerText = "No objects within the radius circle.";
+        }
+    }
+</script>
+</body>
+</html>
