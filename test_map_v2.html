@@ -1,118 +1,90 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>NL Omgevingswet - National Extractor 2026</title>
-    <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
-    <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
-    <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+    <title>NL Maatvoering Downloader - 2026 Stable</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { margin: 0; font-family: sans-serif; }
-        #map { height: 100vh; width: 100%; background: #1a1a1a; }
+        body { margin: 0; font-family: sans-serif; background: #1a1a1a; }
+        #map { height: 100vh; width: 100%; }
         #ui {
-            position: absolute; top: 20px; left: 20px; z-index: 10;
-            background: white; padding: 20px; border-radius: 12px; width: 280px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            position: absolute; top: 20px; left: 20px; z-index: 1000;
+            background: white; padding: 20px; border-radius: 12px; width: 260px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
         }
-        button { width: 100%; cursor: pointer; padding: 12px; background: #e91e63; color: white; border: none; border-radius: 6px; font-weight: bold; }
-        #status { font-size: 12px; margin-top: 10px; color: #444; font-weight: bold; }
+        button { width: 100%; cursor: pointer; padding: 12px; background: #28a745; color: white; border: none; border-radius: 6px; font-weight: bold; }
+        #status { font-size: 13px; margin-top: 10px; color: #555; }
     </style>
 </head>
 <body>
 
 <div id="ui">
-    <h3>2026 National Extractor</h3>
-    <p style="font-size: 11px; color: #666;">Data: Omgevingswet (Productie Actueel)<br>Zoom in to see neon pink shapes.</p>
-    <button onclick="extractData()">Extract Selection</button>
-    <div id="status">Loading Production Tiles...</div>
+    <h3>Maatvoering Extractor</h3>
+    <p style="font-size: 11px; color: #888;">Click map in a built-up area, then click Download.</p>
+    <button onclick="downloadMaatvoering()">Download Area (500m)</button>
+    <div id="status">Click map to set target.</div>
 </div>
 
 <div id="map"></div>
 
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-    const map = new maplibregl.Map({
-        container: 'map',
-        style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
-        center: [4.4791, 51.9225], // Centered on Rotterdam for testing
-        zoom: 14
-    });
+    const map = L.map('map').setView([52.09, 5.12], 13); // Start in Utrecht
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
 
-    map.on('load', () => {
-        // PRODUCTION 2026 ENDPOINT
-        map.addSource('ow_prod', {
-            type: 'vector',
-            tiles: ['https://api.pdok.nl/kadaster/omgevingswet-geometrieen/ogc/v2/collections/productie-actueel/tiles/WebMercatorQuad/{z}/{y}/{x}.pbf'],
-            minzoom: 10,
-            maxzoom: 16
-        });
-
-        // The layer inside these tiles is usually named 'geometrie' or the name of the collection
-        map.addLayer({
-            'id': 'ow-layer',
-            'type': 'fill',
-            'source': 'ow_prod',
-            'source-layer': 'productie-actueel', 
-            'paint': {
-                'fill-color': '#e91e63',
-                'fill-opacity': 0.5,
-                'fill-outline-color': '#ffffff'
-            }
-        });
-
-        document.getElementById('status').innerText = "SYSTEM READY. Zoom into a city.";
-    });
-
-    let clickedPoint = null;
     let marker = null;
+    let selectedPoint = null;
 
     map.on('click', (e) => {
-        clickedPoint = e.lngLat;
+        selectedPoint = e.latlng;
         if (marker) marker.remove();
-        marker = new maplibregl.Marker({color: "#e91e63"}).setLngLat(e.lngLat).addTo(map);
-        document.getElementById('status').innerText = "Target Selected.";
+        marker = L.marker(e.latlng).addTo(map);
+        document.getElementById('status').innerText = "Location set. Ready.";
     });
 
-    function extractData() {
-        if (!clickedPoint) return alert("Click the map first!");
+    async function downloadMaatvoering() {
+        if (!selectedPoint) return alert("Click the map first!");
+        const status = document.getElementById('status');
+        status.innerText = "Querying PDOK...";
 
-        const features = map.querySourceFeatures('ow_prod', {
-            sourceLayer: 'productie-actueel'
+        // The correct 2026 WFS endpoint for planning data
+        const baseUrl = "https://service.pdok.nl/kadaster/plu/wfs/v1_0";
+        
+        // We use EPSG:4326 but PDOK WFS 2.0.0 expects Lat/Lon order in the filter
+        const cql = `DWITHIN(geometrie,POINT(${selectedPoint.lat} ${selectedPoint.lng}),500,meters)`;
+        
+        const params = new URLSearchParams({
+            service: 'WFS',
+            version: '2.0.0',
+            request: 'GetFeature',
+            typeName: 'maatvoering',
+            outputFormat: 'application/json',
+            srsName: 'EPSG:4326',
+            CQL_FILTER: cql
         });
 
-        if (features.length === 0) {
-            document.getElementById('status').innerText = "NO DATA LOADED. Zoom in more!";
-            return;
-        }
+        // Using a reliable CORS proxy
+        const fullUrl = `${baseUrl}?${params.toString()}`;
+        const proxiedUrl = `https://corsproxy.io/?${encodeURIComponent(fullUrl)}`;
 
-        const center = [clickedPoint.lng, clickedPoint.lat];
-        const filtered = features.filter(f => {
-            try {
-                const dist = turf.distance(center, turf.center(f), {units: 'meters'});
-                return dist <= 500; // 500m search radius
-            } catch(e) { return false; }
-        });
+        try {
+            const res = await fetch(proxiedUrl);
+            if (!res.ok) throw new Error(`Server Error: ${res.status}`);
+            
+            const data = await res.json();
 
-        if (filtered.length > 0) {
-            // Deduplicate (tiles repeat features)
-            const seen = new Set();
-            const unique = filtered.filter(f => {
-                const id = JSON.stringify(f.geometry.coordinates);
-                return seen.has(id) ? false : seen.add(id);
-            });
-
-            const collection = turf.featureCollection(unique.map(f => ({
-                type: "Feature",
-                geometry: f.geometry,
-                properties: f.properties
-            })));
-
-            const blob = new Blob([JSON.stringify(collection)], {type: 'application/json'});
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = `omgevingswet_extract.geojson`;
-            a.click();
-            document.getElementById('status').innerText = `EXPORTED ${unique.length} ITEMS!`;
-        } else {
-            document.getElementById('status').innerText = "Nothing within 500m.";
+            if (data.features && data.features.length > 0) {
+                const blob = new Blob([JSON.stringify(data)], {type: 'application/json'});
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = `maatvoering_extract.geojson`;
+                a.click();
+                status.innerText = `Success! Found ${data.features.length} items.`;
+            } else {
+                status.innerText = "No data found here. Try a city center.";
+            }
+        } catch (err) {
+            console.error(err);
+            status.innerText = "Error. Check console (F12).";
         }
     }
 </script>
